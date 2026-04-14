@@ -90,9 +90,9 @@ const ROSTER=[{"id":"3","dex":3,"jp":"フシギバナ","types":["grass","poison"
 function TypeIconButton({type, selectedNum, onClick}) {
   return (
     <button type="button" onClick={onClick} title={TYPE_JP[type]}
-      className={`relative w-11 h-11 rounded-full flex items-center justify-center transition ${selectedNum?'ring-4 ring-offset-1 ring-yellow-400 scale-110':'opacity-80 hover:opacity-100 hover:scale-105'}`}>
-      <img src={typeIconUrl(type)} alt={TYPE_JP[type]} className="w-11 h-11 pointer-events-none rounded-full" />
-      {selectedNum && <span className="absolute -top-1 -right-1 bg-yellow-400 text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center text-black border border-white">{selectedNum}</span>}
+      className={`relative inline-flex items-center justify-center transition ${selectedNum?'ring-4 ring-offset-1 ring-yellow-400 rounded-full scale-110':'opacity-85 hover:opacity-100 hover:scale-105'}`}>
+      <img src={typeIconUrl(type)} alt={TYPE_JP[type]} className="w-24 sm:w-28 h-auto pointer-events-none" />
+      {selectedNum && <span className="absolute -top-1 -right-1 bg-yellow-400 text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center text-black border border-white">{selectedNum}</span>}
     </button>
   );
 }
@@ -110,8 +110,8 @@ const IconShield = (p) => <Icon {...p} d={<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c
 
 // ====== UIパーツ ======
 function TypeBadge({type, size='sm'}) {
-  const sz = size === 'sm' ? 'w-5 h-5' : 'w-7 h-7';
-  return <img src={typeIconUrl(type)} alt={TYPE_JP[type]} title={TYPE_JP[type]} className={`${sz} rounded-full inline-block`} />;
+  const sz = size === 'sm' ? 'w-12 h-auto' : 'w-16 h-auto';
+  return <img src={typeIconUrl(type)} alt={TYPE_JP[type]} title={TYPE_JP[type]} className={`${sz} inline-block align-middle`} />;
 }
 function MultBadge({mult}) {
   if (mult === 0)    return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-white font-bold">0×</span>;
@@ -159,7 +159,7 @@ function PokemonPicker({onSelect, onClose}) {
               <button onClick={()=>{setType1('');setType2('');}} className="text-xs text-blue-600 hover:underline">クリア</button>
             )}
           </div>
-          <div className="grid grid-cols-9 gap-1.5 justify-items-center">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 justify-items-center">
             {TYPES.map(t => {
               const sel = type1===t ? 1 : (type2===t ? 2 : 0);
               const onClick = () => {
