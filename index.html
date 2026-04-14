@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ポケチャン選出補助</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html,body{background:#f9fafb;}
+  /* タップ領域確保 */
+  button, select, input{min-height:32px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+// ====== 定数 ======
+const TYPES = ['normal','fire','water','electric','grass','ice','fighting','poison','ground','flying','psychic','bug','rock','ghost','dragon','dark','steel','fairy'];
+
+const TYPE_JP = {
+  normal:'ノーマル', fire:'ほのお', water:'みず', electric:'でんき', grass:'くさ',
+  ice:'こおり', fighting:'かくとう', poison:'どく', ground:'じめん', flying:'ひこう',
+  psychic:'エスパー', bug:'むし', rock:'いわ', ghost:'ゴースト', dragon:'ドラゴン',
+  dark:'あく', steel:'はがね', fairy:'フェアリー'
+};
+
+const TYPE_COLOR = {
+  normal:'bg-gray-400', fire:'bg-red-500', water:'bg-blue-500', electric:'bg-yellow-400',
+  grass:'bg-green-500', ice:'bg-cyan-400', fighting:'bg-red-700', poison:'bg-purple-500',
+  ground:'bg-amber-600', flying:'bg-indigo-300', psychic:'bg-pink-500', bug:'bg-lime-500',
+  rock:'bg-yellow-700', ghost:'bg-purple-700', dragon:'bg-indigo-700', dark:'bg-gray-700',
+  steel:'bg-slate-500', fairy:'bg-pink-300'
+};
+
+const EFFECTIVE = {
+  normal:   { rock:0.5, ghost:0, steel:0.5 },
+  fire:     { fire:0.5, water:0.5, grass:2, ice:2, bug:2, rock:0.5, dragon:0.5, steel:2 },
+  water:    { fire:2, water:0.5, grass:0.5, ground:2, rock:2, dragon:0.5 },
+  electric: { water:2, electric:0.5, grass:0.5, ground:0, flying:2, dragon:0.5 },
+  grass:    { fire:0.5, water:2, grass:0.5, poison:0.5, ground:2, flying:0.5, bug:0.5, rock:2, dragon:0.5, steel:0.5 },
+  ice:      { fire:0.5, water:0.5, grass:2, ice:0.5, ground:2, flying:2, dragon:2, steel:0.5 },
+  fighting: { normal:2, ice:2, poison:0.5, flying:0.5, psychic:0.5, bug:0.5, rock:2, ghost:0, dark:2, steel:2, fairy:0.5 },
+  poison:   { grass:2, poison:0.5, ground:0.5, rock:0.5, ghost:0.5, steel:0, fairy:2 },
+  ground:   { fire:2, electric:2, grass:0.5, poison:2, flying:0, bug:0.5, rock:2, steel:2 },
+  flying:   { electric:0.5, grass:2, fighting:2, bug:2, rock:0.5, steel:0.5 },
+  psychic:  { fighting:2, poison:2, psychic:0.5, dark:0, steel:0.5 },
+  bug:      { fire:0.5, grass:2, fighting:0.5, poison:0.5, flying:0.5, psychic:2, ghost:0.5, dark:2, steel:0.5, fairy:0.5 },
+  rock:     { fire:2, ice:2, fighting:0.5, ground:0.5, flying:2, bug:2, steel:0.5 },
+  ghost:    { normal:0, psychic:2, ghost:2, dark:0.5 },
+  dragon:   { dragon:2, steel:0.5, fairy:0 },
+  dark:     { fighting:0.5, psychic:2, ghost:2, dark:0.5, fairy:0.5 },
+  steel:    { fire:0.5, water:0.5, electric:0.5, ice:2, rock:2, steel:0.5, fairy:2 },
+  fairy:    { fire:0.5, fighting:2, poison:0.5, dragon:2, dark:2, steel:0.5 }
+};
+
+// ====== 計算 ======
+function defensiveMult(attackType, defTypes) {
+  let m = 1;
+  defTypes.forEach(t => {
+    const v = EFFECTIVE[attackType]?.[t];
+    if (v !== undefined) m *= v;
+  });
+  return m;
+}
+function allWeaknesses(defTypes) {
+  const r = {};
+  TYPES.forEach(atk => { r[atk] = defensiveMult(atk, defTypes); });
+  return r;
+}
+function idFromUrl(url) {
+  const m = url.match(/\/pokemon\/(\d+)\//);
+  return m ? parseInt(m[1]) : null;
+}
+const artworkUrl = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+const spriteUrl  = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
+const typeIconUrl = type => `https://raw.githubusercontent.com/duiker101/pokemon-type-svg-icons/master/icons/${type}.svg`;
+
+function TypeIconButton({type, selectedNum, onClick}) {
+  return (
+    <button type="button" onClick={onClick} title={TYPE_JP[type]}
+      className={`relative w-11 h-11 rounded-full flex items-center justify-center transition ${TYPE_COLOR[type]} ${selectedNum?'ring-4 ring-offset-1 ring-yellow-400 scale-110':'opacity-70 hover:opacity-100 hover:scale-105'}`}>
+      <img src={typeIconUrl(type)} alt="" className="w-6 h-6 pointer-events-none" style={{filter:'brightness(0) invert(1)'}} />
+      {selectedNum && <span className="absolute -top-1 -right-1 bg-yellow-400 text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center text-black border border-white">{selectedNum}</span>}
+    </button>
+  );
+}
+
+// ====== 簡易アイコン（lucide代替のSVG） ======
+const Icon = ({d, className='w-4 h-4'}) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
+);
+const IconPlus = (p) => <Icon {...p} d={<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>} />;
+const IconX = (p) => <Icon {...p} d={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>} />;
+const IconTrash = (p) => <Icon {...p} d={<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></>} />;
+const IconSwords = (p) => <Icon {...p} d={<><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" y1="19" x2="19" y2="13"/><line x1="16" y1="16" x2="20" y2="20"/><line x1="19" y1="21" x2="21" y2="19"/></>} />;
+const IconSettings = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>} />;
+const IconShield = (p) => <Icon {...p} d={<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>} />;
+
+// ====== UIパーツ ======
+function TypeBadge({type, size='sm'}) {
+  const cls = size === 'sm' ? 'text-xs px-1.5 py-0.5' : 'text-sm px-2 py-1';
+  return <span className={`${TYPE_COLOR[type]} ${cls} text-white rounded font-bold`}>{TYPE_JP[type]}</span>;
+}
+function MultBadge({mult}) {
+  if (mult === 0)    return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-white font-bold">0×</span>;
+  if (mult === 4)    return <span className="text-xs px-1.5 py-0.5 rounded bg-red-600 text-white font-bold">4×</span>;
+  if (mult === 2)    return <span className="text-xs px-1.5 py-0.5 rounded bg-orange-500 text-white font-bold">2×</span>;
+  if (mult === 0.5)  return <span className="text-xs px-1.5 py-0.5 rounded bg-blue-400 text-white font-bold">½</span>;
+  if (mult === 0.25) return <span className="text-xs px-1.5 py-0.5 rounded bg-blue-700 text-white font-bold">¼</span>;
+  return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">1×</span>;
+}
+
+// ====== ポケモンピッカー ======
+function PokemonPicker({onSelect, onClose, japNames}) {
+  const [type1, setType1] = useState('');
+  const [type2, setType2] = useState('');
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (!type1) { setResults([]); return; }
+    setLoading(true);
+    const reqs = [fetch(`https://pokeapi.co/api/v2/type/${type1}`).then(r=>r.json())];
+    if (type2 && type2 !== type1) reqs.push(fetch(`https://pokeapi.co/api/v2/type/${type2}`).then(r=>r.json()));
+    Promise.all(reqs).then(([d1, d2]) => {
+      let list = d1.pokemon.map(p => ({name:p.pokemon.name, id:idFromUrl(p.pokemon.url)})).filter(p=>p.id && p.id<=1025);
+      if (d2) {
+        const set2 = new Set(d2.pokemon.map(p => idFromUrl(p.pokemon.url)));
+        list = list.filter(p => set2.has(p.id));
+      }
+      list.sort((a,b)=>a.id-b.id);
+      setResults(list);
+      setLoading(false);
+    }).catch(()=>setLoading(false));
+  }, [type1, type2]);
+
+  const filtered = useMemo(() => {
+    if (!search) return results;
+    const s = search.toLowerCase();
+    return results.filter(p => (japNames[p.id-1]||'').includes(search) || p.name.includes(s));
+  }, [results, search, japNames]);
+
+  const pick = async (p) => {
+    setLoading(true);
+    try {
+      const data = await fetch(`https://pokeapi.co/api/v2/pokemon/${p.id}`).then(r=>r.json());
+      const types = data.types.map(t=>t.type.name);
+      onSelect({ id:p.id, name:p.name, types, jp: japNames[p.id-1] || p.name });
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg w-full max-w-4xl max-h-[95vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+        <div className="p-3 border-b flex items-center justify-between">
+          <h3 className="text-base sm:text-lg font-bold">ポケモン選択</h3>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded"><IconX className="w-5 h-5" /></button>
+        </div>
+        <div className="p-3 border-b space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-bold text-gray-600">タイプを選択（1→2の順に最大2つ）</div>
+            {(type1 || type2) && (
+              <button onClick={()=>{setType1('');setType2('');}} className="text-xs text-blue-600 hover:underline">クリア</button>
+            )}
+          </div>
+          <div className="grid grid-cols-9 gap-1.5 justify-items-center">
+            {TYPES.map(t => {
+              const sel = type1===t ? 1 : (type2===t ? 2 : 0);
+              const onClick = () => {
+                if (type1 === t) { setType1(type2); setType2(''); return; }
+                if (type2 === t) { setType2(''); return; }
+                if (!type1) setType1(t);
+                else if (!type2) setType2(t);
+                else { setType1(type2); setType2(t); }
+              };
+              return <TypeIconButton key={t} type={t} selectedNum={sel||null} onClick={onClick} />;
+            })}
+          </div>
+          <input type="text" placeholder="名前で絞り込み（任意）" value={search} onChange={e=>setSearch(e.target.value)}
+            className="w-full border rounded px-2 py-1 text-sm" />
+          <div className="text-xs text-gray-500">{type1 ? (results.length > 0 ? `${filtered.length}/${results.length}件` : '読み込み中...') : 'タイプを選んでください'}</div>
+        </div>
+        <div className="flex-1 overflow-auto p-3">
+          {loading && <div className="text-center text-gray-500 py-8">読み込み中...</div>}
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+            {filtered.map(p => (
+              <button key={p.id} onClick={()=>pick(p)} className="border rounded p-2 hover:bg-blue-50 hover:border-blue-400 transition text-left">
+                <img src={artworkUrl(p.id)} alt="" loading="lazy" className="w-full aspect-square object-contain bg-gray-50 rounded"
+                  onError={e => { e.target.src = spriteUrl(p.id); }} />
+                <div className="text-xs font-medium text-center mt-1 truncate">{japNames[p.id-1] || p.name}</div>
+                <div className="text-[10px] text-gray-400 text-center">#{p.id}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ====== 自軍登録 ======
+function TeamSetup({team, setTeam, japNames}) {
+  const [pickerIdx, setPickerIdx] = useState(null);
+
+  const setSlot = (idx, poke) => {
+    const copy = [...team];
+    copy[idx] = { ...poke, moves: copy[idx]?.moves || [{name:'',type:''},{name:'',type:''},{name:'',type:''},{name:'',type:''}] };
+    setTeam(copy);
+    setPickerIdx(null);
+  };
+  const setMove = (pIdx, mIdx, field, value) => {
+    const copy = [...team];
+    copy[pIdx].moves[mIdx] = { ...copy[pIdx].moves[mIdx], [field]: value };
+    setTeam(copy);
+  };
+  const clearSlot = idx => {
+    const copy = [...team];
+    copy[idx] = null;
+    setTeam(copy);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="text-sm text-gray-600">自軍6体と各4技を登録。技はタイプだけ合っていればOK（弱点判定に使用）。</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {[0,1,2,3,4,5].map(i => {
+          const p = team[i];
+          return (
+            <div key={i} className="border rounded-lg p-3 bg-white">
+              <div className="flex gap-3 items-start">
+                {p ? (
+                  <>
+                    <img src={artworkUrl(p.id)} alt="" className="w-20 h-20 object-contain bg-gray-50 rounded flex-shrink-0"
+                      onError={e=>{e.target.src=spriteUrl(p.id)}} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold truncate">{p.jp}</div>
+                        <button onClick={()=>clearSlot(i)} className="text-red-500 hover:bg-red-50 p-1 rounded"><IconTrash className="w-4 h-4" /></button>
+                      </div>
+                      <div className="flex gap-1 mt-1 flex-wrap">
+                        {p.types.map(t => <TypeBadge key={t} type={t} />)}
+                      </div>
+                      <button onClick={()=>setPickerIdx(i)} className="text-xs text-blue-600 hover:underline mt-1">変更</button>
+                    </div>
+                  </>
+                ) : (
+                  <button onClick={()=>setPickerIdx(i)} className="w-full border-2 border-dashed rounded p-4 text-gray-400 hover:border-blue-400 hover:text-blue-600 flex items-center justify-center gap-2">
+                    <IconPlus className="w-4 h-4" /> スロット{i+1}
+                  </button>
+                )}
+              </div>
+              {p && (
+                <div className="mt-3 space-y-1.5">
+                  <div className="text-xs font-bold text-gray-600">わざ</div>
+                  {[0,1,2,3].map(m => (
+                    <div key={m} className="flex gap-1.5">
+                      <input type="text" placeholder={`技${m+1}（名前）`} value={p.moves[m]?.name || ''}
+                        onChange={e=>setMove(i,m,'name',e.target.value)}
+                        className="flex-1 border rounded px-2 py-1 text-xs" />
+                      <select value={p.moves[m]?.type || ''} onChange={e=>setMove(i,m,'type',e.target.value)}
+                        className="border rounded px-1 py-1 text-xs w-24">
+                        <option value="">タイプ</option>
+                        {TYPES.map(t=><option key={t} value={t}>{TYPE_JP[t]}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {pickerIdx !== null && (
+        <PokemonPicker onSelect={p=>setSlot(pickerIdx, p)} onClose={()=>setPickerIdx(null)} japNames={japNames} />
+      )}
+    </div>
+  );
+}
+
+// ====== 相手分析 ======
+function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
+  if (!opp) {
+    return (
+      <button onClick={onPick} className="border-2 border-dashed rounded-lg p-6 text-gray-400 hover:border-blue-400 hover:text-blue-600 flex flex-col items-center justify-center gap-2 min-h-[160px]">
+        <IconPlus className="w-6 h-6" />
+        <span className="text-sm font-bold">相手{idx+1}を追加</span>
+      </button>
+    );
+  }
+
+  const weak = allWeaknesses(opp.types);
+  const weak4 = TYPES.filter(t => weak[t] === 4);
+  const weak2 = TYPES.filter(t => weak[t] === 2);
+  const resist = TYPES.filter(t => weak[t] < 1 && weak[t] > 0);
+  const immune = TYPES.filter(t => weak[t] === 0);
+
+  const hits = [];
+  userTeam.forEach((up, pi) => {
+    if (!up) return;
+    up.moves?.forEach(mv => {
+      if (!mv.type) return;
+      const m = defensiveMult(mv.type, opp.types);
+      if (m >= 2) hits.push({ userIdx:pi, userJp:up.jp, moveName:mv.name || '(無名)', moveType:mv.type, mult:m });
+    });
+  });
+  hits.sort((a,b)=>b.mult - a.mult);
+
+  return (
+    <div className="border rounded-lg p-3 bg-white">
+      <div className="flex gap-3 items-start">
+        <img src={artworkUrl(opp.id)} alt="" className="w-20 h-20 object-contain bg-gray-50 rounded flex-shrink-0"
+          onError={e=>{e.target.src=spriteUrl(opp.id)}} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <div className="font-bold truncate">{opp.jp}</div>
+            <div className="flex gap-1">
+              <button onClick={onPick} className="text-xs text-blue-600 hover:underline">変更</button>
+              <button onClick={onClear} className="text-red-500 hover:bg-red-50 p-1 rounded"><IconX className="w-4 h-4" /></button>
+            </div>
+          </div>
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {opp.types.map(t => <TypeBadge key={t} type={t} />)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-1.5 text-xs">
+        {weak4.length > 0 && (
+          <div className="flex gap-1 flex-wrap items-center">
+            <MultBadge mult={4} />
+            {weak4.map(t => <TypeBadge key={t} type={t} />)}
+          </div>
+        )}
+        {weak2.length > 0 && (
+          <div className="flex gap-1 flex-wrap items-center">
+            <MultBadge mult={2} />
+            {weak2.map(t => <TypeBadge key={t} type={t} />)}
+          </div>
+        )}
+        {resist.length > 0 && (
+          <div className="flex gap-1 flex-wrap items-center opacity-70">
+            <MultBadge mult={0.5} />
+            {resist.map(t => <TypeBadge key={t} type={t} />)}
+          </div>
+        )}
+        {immune.length > 0 && (
+          <div className="flex gap-1 flex-wrap items-center opacity-70">
+            <MultBadge mult={0} />
+            {immune.map(t => <TypeBadge key={t} type={t} />)}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 border-t pt-2">
+        <div className="text-xs font-bold text-gray-600 mb-1.5 flex items-center gap-1">
+          <IconSwords className="w-3 h-3" /> 自軍の抜群技
+        </div>
+        {hits.length === 0 ? (
+          <div className="text-xs text-gray-400">抜群を取れる登録技なし</div>
+        ) : (
+          <div className="space-y-1">
+            {hits.map((h, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-xs">
+                <MultBadge mult={h.mult} />
+                <TypeBadge type={h.moveType} />
+                <span className="truncate flex-1">
+                  <span className="font-medium">{h.userJp}</span>
+                  <span className="text-gray-500"> / {h.moveName}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BattleView({opponents, setOpponents, userTeam, japNames}) {
+  const [pickerIdx, setPickerIdx] = useState(null);
+
+  const setSlot = (idx, poke) => {
+    const copy = [...opponents];
+    copy[idx] = poke;
+    setOpponents(copy);
+    setPickerIdx(null);
+  };
+  const clearSlot = idx => {
+    const copy = [...opponents];
+    copy[idx] = null;
+    setOpponents(copy);
+  };
+
+  const filled = opponents.filter(Boolean).length;
+  const teamReady = userTeam.some(Boolean);
+
+  return (
+    <div className="space-y-3">
+      {!teamReady && (
+        <div className="bg-amber-50 border border-amber-300 rounded p-3 text-sm">
+          <IconShield className="w-4 h-4 inline mr-1" />
+          自軍が未登録です。上の「自軍登録」タブから先に登録してください（抜群技の判定に必要）。
+        </div>
+      )}
+      <div className="text-sm text-gray-600">相手パーティ ({filled}/6体)</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {[0,1,2,3,4,5].map(i => (
+          <OpponentSlot key={i} idx={i} opp={opponents[i]} userTeam={userTeam}
+            onPick={()=>setPickerIdx(i)} onClear={()=>clearSlot(i)} />
+        ))}
+      </div>
+      {pickerIdx !== null && (
+        <PokemonPicker onSelect={p=>setSlot(pickerIdx, p)} onClose={()=>setPickerIdx(null)} japNames={japNames} />
+      )}
+    </div>
+  );
+}
+
+// ====== メイン ======
+function App() {
+  const [tab, setTab] = useState('battle');
+  const [userTeam, setUserTeam] = useState([null,null,null,null,null,null]);
+  const [opponents, setOpponents] = useState([null,null,null,null,null,null]);
+  const [japNames, setJapNames] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch('https://raw.githubusercontent.com/sindresorhus/pokemon/main/data/ja.json')
+      .then(r=>r.json()).then(setJapNames).catch(()=>{});
+
+    try {
+      const raw = localStorage.getItem('user_team_v1');
+      if (raw) setUserTeam(JSON.parse(raw));
+    } catch(e) {}
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try { localStorage.setItem('user_team_v1', JSON.stringify(userTeam)); } catch(e) {}
+  }, [userTeam, loaded]);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-6xl mx-auto p-3 sm:p-4">
+        <header className="mb-4">
+          <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助</h1>
+          <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
+        </header>
+
+        <div className="flex gap-1 mb-4 border-b">
+          <button onClick={()=>setTab('battle')}
+            className={`px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition ${tab==='battle'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            <IconSwords className="w-4 h-4" /> 対戦
+          </button>
+          <button onClick={()=>setTab('team')}
+            className={`px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition ${tab==='team'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            <IconSettings className="w-4 h-4" /> 自軍登録
+          </button>
+        </div>
+
+        {tab==='battle'
+          ? <BattleView opponents={opponents} setOpponents={setOpponents} userTeam={userTeam} japNames={japNames} />
+          : <TeamSetup team={userTeam} setTeam={setUserTeam} japNames={japNames} />
+        }
+
+        <footer className="mt-8 text-xs text-gray-400 text-center">
+          データ: PokeAPI / sindresorhus/pokemon
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
