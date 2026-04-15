@@ -622,6 +622,156 @@ function AnalysisPanel({userTeam, opponents}) {
   );
 }
 
+// ====== 天敵分析 ======
+function NemesisView({userTeam}) {
+  const users = userTeam.filter(Boolean);
+  const userIds = new Set(users.map(u => u.id));
+  const [limit, setLimit] = useState(20);
+
+  // 各候補 e に対してスコア計算
+  const analysis = useMemo(() => {
+    if (users.length === 0) return null;
+    const candidates = ROSTER.filter(p => !userIds.has(p.id));
+    const scored = candidates.map(e => {
+      let threatens = 0, cantCounter = 0, fasterThan = 0;
+      const threatenedList = []; // どの自軍を脅かすか
+      for (const u of users) {
+        // eがuを脅かす: STAB≥2倍で攻撃可能
+        const eThreatMult = Math.max(...e.types.map(t => defensiveMult(t, u.types)));
+        const threatens_u = eThreatMult >= 2;
+        // uがeに反撃可能: 登録技でe.typesに≥2倍
+        const counterMult = Math.max(0, ...(u.moves||[]).filter(m=>m.type).map(m => defensiveMult(m.type, e.types)));
+        const canCounter = counterMult >= 2;
+        if (threatens_u) {
+          threatens++;
+          if (!canCounter) cantCounter++;
+          threatenedList.push({u, mult: eThreatMult});
+        }
+        if ((e.spd||0) > (u.spd||0)) fasterThan++;
+      }
+      return {e, threatens, cantCounter, fasterThan, threatenedList};
+    });
+    // ソート: 反撃不能で脅かす数 > 脅威数 > 素早さ優位数
+    scored.sort((a,b) => b.cantCounter - a.cantCounter || b.threatens - a.threatens || b.fasterThan - a.fasterThan);
+    return scored.filter(s => s.threatens > 0);
+  }, [userTeam]);
+
+  // 各自軍ポケ別の天敵TOP5
+  const perPoke = useMemo(() => {
+    return users.map(u => {
+      const threats = ROSTER.filter(p => !userIds.has(p.id) || p.id !== u.id).map(e => {
+        const stabMult = Math.max(...e.types.map(t => defensiveMult(t, u.types)));
+        const counterMult = Math.max(0, ...(u.moves||[]).filter(m=>m.type).map(m => defensiveMult(m.type, e.types)));
+        const faster = (e.spd||0) > (u.spd||0);
+        // スコア: STAB倍率 * (反撃不能なら2倍) * (先制なら1.3倍)
+        const score = stabMult * (counterMult >= 2 ? 1 : 2) * (faster ? 1.3 : 1);
+        return {e, stabMult, counterMult, faster, score};
+      }).filter(t => t.stabMult >= 2);
+      threats.sort((a,b) => b.score - a.score);
+      return {u, threats: threats.slice(0,5)};
+    });
+  }, [userTeam]);
+
+  if (users.length === 0) {
+    return (
+      <div className="bg-amber-50 border border-amber-300 rounded p-3 text-sm">
+        自軍が未登録です。「自軍登録」タブから先に登録してください。
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="text-sm text-gray-600">自軍{users.length}体に対して、ROSTER全{ROSTER.length}体からの脅威度を計算。</div>
+
+      {/* 全体天敵TOP */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-bold text-gray-700">🔥 チーム全体の天敵ランキング TOP{limit}</div>
+          <select value={limit} onChange={e=>setLimit(+e.target.value)} className="border rounded px-1 py-0.5 text-xs">
+            <option value={10}>10件</option>
+            <option value={20}>20件</option>
+            <option value={50}>50件</option>
+          </select>
+        </div>
+        <div className="text-[10px] text-gray-500 mb-2">※ 反撃不能数 → 脅威数 → 素早さ優位 の順でソート</div>
+        {analysis && analysis.length > 0 ? (
+          <div className="space-y-1.5">
+            {analysis.slice(0, limit).map((s, i) => (
+              <div key={s.e.id} className="flex items-center gap-2 border-b pb-1.5 last:border-0">
+                <span className="w-6 text-center text-xs font-bold text-gray-400">{i+1}</span>
+                <img src={pokeImg(s.e)} onError={e=>{e.target.src=pokeImgFallback(s.e)}} className="w-10 h-10 object-contain flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs font-bold truncate">{s.e.jp}</span>
+                    {s.e.types.map(t => <TypeBadge key={t} type={t} />)}
+                    <span className="text-[10px] text-gray-500">S{s.e.spd}</span>
+                  </div>
+                  <div className="text-[10px] text-gray-600 mt-0.5">
+                    <span className="text-red-600 font-bold">脅威 {s.threatens}/{users.length}</span>
+                    {s.cantCounter > 0 && <span className="text-red-800 font-bold ml-1.5">反撃不能 {s.cantCounter}</span>}
+                    <span className="text-gray-500 ml-1.5">先制 {s.fasterThan}/{users.length}</span>
+                  </div>
+                </div>
+                <div className="flex gap-0.5 flex-wrap max-w-[40%] justify-end">
+                  {s.threatenedList.map((tu, ti) => (
+                    <img key={ti} src={pokeImg(tu.u)} title={`${tu.u.jp} (${tu.mult}×)`}
+                      className={`w-7 h-7 object-contain rounded ${tu.mult>=4?'ring-2 ring-red-600':'ring-1 ring-orange-400'}`}
+                      onError={e=>{e.target.src=pokeImgFallback(tu.u)}} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-green-600">脅威なし ✓</div>
+        )}
+      </div>
+
+      {/* 自軍各ポケの個別天敵 */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="text-sm font-bold text-gray-700 mb-2">👤 自軍各ポケの苦手相手 TOP5</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {perPoke.map(({u, threats}) => (
+            <div key={u.id} className="border rounded p-2">
+              <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b">
+                <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-10 h-10 object-contain" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold truncate">{u.jp}</div>
+                  <div className="flex gap-1 items-center">
+                    {u.types.map(t => <TypeBadge key={t} type={t} />)}
+                    <span className="text-[10px] text-gray-500">S{u.spd}</span>
+                  </div>
+                </div>
+              </div>
+              {threats.length === 0 ? (
+                <div className="text-xs text-green-600">苦手なし ✓</div>
+              ) : (
+                <div className="space-y-1">
+                  {threats.map((t, i) => (
+                    <div key={t.e.id} className="flex items-center gap-1.5 text-xs">
+                      <span className="w-3 text-gray-400 text-[10px]">{i+1}.</span>
+                      <img src={pokeImg(t.e)} onError={e=>{e.target.src=pokeImgFallback(t.e)}} className="w-7 h-7 object-contain" />
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate">{t.e.jp}</div>
+                        <div className="flex gap-0.5 items-center text-[9px]">
+                          <MultBadge mult={t.stabMult>=4?4:2} />
+                          {t.counterMult < 2 && <span className="text-red-600 font-bold">反撃不能</span>}
+                          {t.faster && <span className="text-orange-600">先制</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BattleView({opponents, setOpponents, userTeam}) {
   const [pickerIdx, setPickerIdx] = useState(null);
 
@@ -784,12 +934,15 @@ function App() {
             className={`px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition ${tab==='team'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
             <IconSettings className="w-4 h-4" /> 自軍登録
           </button>
+          <button onClick={()=>setTab('nemesis')}
+            className={`px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition ${tab==='nemesis'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            🔥 天敵
+          </button>
         </div>
 
-        {tab==='battle'
-          ? <BattleView opponents={opponents} setOpponents={setOpponents} userTeam={userTeam} />
-          : <TeamSetup team={userTeam} setTeam={setUserTeam} />
-        }
+        {tab==='battle' && <BattleView opponents={opponents} setOpponents={setOpponents} userTeam={userTeam} />}
+        {tab==='team' && <TeamSetup team={userTeam} setTeam={setUserTeam} />}
+        {tab==='nemesis' && <NemesisView userTeam={userTeam} />}
 
         <footer className="mt-8 text-xs text-gray-400 text-center">
           データ: GameWith / PokeAPI
