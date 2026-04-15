@@ -402,6 +402,22 @@ function TeamBuilderSuggest({team, onAdd}) {
 function TeamSetup({team, setTeam}) {
   const [pickerIdx, setPickerIdx] = useState(null);
 
+  // 古い保存データにspd/img等が欠けている場合、ROSTERから補完
+  useEffect(() => {
+    let changed = false;
+    const fixed = team.map(p => {
+      if (!p) return p;
+      const r = ROSTER.find(x => x.id === p.id);
+      if (!r) return p;
+      const patched = {...p};
+      if (p.spd === undefined && r.spd !== undefined) { patched.spd = r.spd; changed = true; }
+      if (!p.img && r.img) { patched.img = r.img; changed = true; }
+      if (!p.dex && r.dex) { patched.dex = r.dex; changed = true; }
+      return patched;
+    });
+    if (changed) setTeam(fixed);
+  }, []);
+
   const setSlot = (idx, poke) => {
     const copy = [...team];
     copy[idx] = { ...poke, moves: copy[idx]?.moves || [{name:'',type:''},{name:'',type:''},{name:'',type:''},{name:'',type:''}] };
@@ -422,6 +438,25 @@ function TeamSetup({team, setTeam}) {
   return (
     <div className="space-y-3">
       <div className="text-sm text-gray-600">自軍6体と各4技を登録。技はタイプだけ合っていればOK（弱点判定に使用）。</div>
+      {team.some(Boolean) && (
+        <div className="bg-white border rounded-lg p-2">
+          <div className="text-xs font-bold text-gray-600 mb-1.5">素早さ一覧（速い順）</div>
+          <div className="flex flex-wrap gap-1.5">
+            {team.filter(Boolean).slice().sort((a,b)=>(b.spd||0)-(a.spd||0)).map((p,i) => (
+              <div key={p.id+'-'+i} className="flex items-center gap-1 bg-gray-50 rounded px-1.5 py-0.5">
+                <img src={pokeImg(p)} onError={e=>{e.target.src=pokeImgFallback(p)}} className="w-6 h-6 object-contain" />
+                <span className="text-[10px] truncate max-w-[90px]">{p.jp}</span>
+                <span className="text-[11px] font-bold text-blue-700">S{p.spd ?? '?'}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] text-gray-500 mt-1">
+            平均 S{Math.round(team.filter(Boolean).reduce((s,p)=>s+(p.spd||0),0)/Math.max(1,team.filter(Boolean).length))}
+            ・最速 S{Math.max(0,...team.filter(Boolean).map(p=>p.spd||0))}
+            ・最遅 S{team.filter(Boolean).length ? Math.min(...team.filter(Boolean).map(p=>p.spd||0)) : 0}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {[0,1,2,3,4,5].map(i => {
           const p = team[i];
