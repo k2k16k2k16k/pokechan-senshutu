@@ -73,6 +73,35 @@ function allWeaknesses(defTypes) {
   TYPES.forEach(atk => { r[atk] = defensiveMult(atk, defTypes); });
   return r;
 }
+
+// 一致技(STAB)考慮の最大攻撃スコア
+function bestHitScore(userPoke, opp) {
+  if (!userPoke || !opp) return {score:0, mult:0, stab:false, mv:null};
+  let best = {score:0, mult:0, stab:false, mv:null};
+  for (const mv of (userPoke.moves || [])) {
+    if (!mv.type) continue;
+    const mult = defensiveMult(mv.type, opp.types);
+    const stab = userPoke.types.includes(mv.type);
+    const score = mult * (stab ? 1.5 : 1);
+    if (score > best.score) best = {score, mult, stab, mv};
+  }
+  return best;
+}
+
+// C(n,k) 組み合わせ列挙
+function combinations(arr, k) {
+  const res = [];
+  const rec = (start, pick) => {
+    if (pick.length === k) { res.push([...pick]); return; }
+    for (let i=start; i<arr.length; i++) {
+      pick.push(arr[i]);
+      rec(i+1, pick);
+      pick.pop();
+    }
+  };
+  rec(0, []);
+  return res;
+}
 function idFromUrl(url) {
   const m = url.match(/\/pokemon\/(\d+)\//);
   return m ? parseInt(m[1]) : null;
@@ -85,7 +114,7 @@ const pokeImg = p => p?.img ? gwImgUrl(p.img) : (p?.dex ? artworkUrl(p.dex) : (p
 const pokeImgFallback = p => p?.dex ? spriteUrl(p.dex) : (p?.id ? spriteUrl(p.id) : '');
 
 // ====== Pokémon Champions 参戦ロスター（218件・フォーム含む） ======
-const ROSTER=[{"id":"3","dex":3,"jp":"フシギバナ","types":["grass","poison"],"img":"003.png"},{"id":"7","dex":6,"jp":"リザードン","types":["fire","flying"],"img":"006.png"},{"id":"12","dex":9,"jp":"カメックス","types":["water"],"img":"009.png"},{"id":"19","dex":15,"jp":"スピアー","types":["bug","poison"],"img":"015.png"},{"id":"23","dex":18,"jp":"ピジョット","types":["normal","flying"],"img":"018.png"},{"id":"32","dex":24,"jp":"アーボック","types":["poison"],"img":"024.png"},{"id":"33","dex":25,"jp":"ピカチュウ","types":["electric"],"img":"025.png"},{"id":"34","dex":26,"jp":"ライチュウ","types":["electric"],"img":"026.png"},{"id":"35","dex":26,"jp":"アローラライチュウ","types":["electric","psychic"],"img":"026_1.png"},{"id":"49","dex":36,"jp":"ピクシー","types":["fairy"],"img":"036.png"},{"id":"53","dex":38,"jp":"キュウコン","types":["fire"],"img":"038.png"},{"id":"54","dex":38,"jp":"アローラキュウコン","types":["ice","fairy"],"img":"038_1.png"},{"id":"81","dex":59,"jp":"ウインディ","types":["fire"],"img":"059.png"},{"id":"82","dex":59,"jp":"ヒスイウインディ","types":["fire","rock"],"img":"059_1.png"},{"id":"88","dex":65,"jp":"フーディン","types":["psychic"],"img":"065.png"},{"id":"92","dex":68,"jp":"カイリキー","types":["fighting"],"img":"068.png"},{"id":"95","dex":71,"jp":"ウツボット","types":["grass","poison"],"img":"071.png"},{"id":"111","dex":80,"jp":"ヤドラン","types":["water","psychic"],"img":"080.png"},{"id":"113","dex":80,"jp":"ガラルヤドラン","types":["poison","psychic"],"img":"080_2.png"},{"id":"130","dex":94,"jp":"ゲンガー","types":["ghost","poison"],"img":"094.png"},{"id":"157","dex":115,"jp":"ガルーラ","types":["normal"],"img":"115.png"},{"id":"164","dex":121,"jp":"スターミー","types":["water","psychic"],"img":"121.png"},{"id":"172","dex":127,"jp":"カイロス","types":["bug"],"img":"127.png"},{"id":"174","dex":128,"jp":"ケンタロス","types":["normal"],"img":"128.png"},{"id":"1184","dex":128,"jp":"パルデアケンタロス(かくとう)","types":["fighting"],"img":"128_1.png"},{"id":"1185","dex":128,"jp":"パルデアケンタロス(みず)","types":["fighting","water"],"img":"128_2.png"},{"id":"1186","dex":128,"jp":"パルデアケンタロス(ほのお)","types":["fighting","fire"],"img":"128_3.png"},{"id":"176","dex":130,"jp":"ギャラドス","types":["water","flying"],"img":"130.png"},{"id":"179","dex":132,"jp":"メタモン","types":["normal"],"img":"132.png"},{"id":"181","dex":134,"jp":"シャワーズ","types":["water"],"img":"134.png"},{"id":"182","dex":135,"jp":"サンダース","types":["electric"],"img":"135.png"},{"id":"183","dex":136,"jp":"ブースター","types":["fire"],"img":"136.png"},{"id":"189","dex":142,"jp":"プテラ","types":["rock","flying"],"img":"142.png"},{"id":"191","dex":143,"jp":"カビゴン","types":["normal"],"img":"143.png"},{"id":"200","dex":149,"jp":"カイリュー","types":["dragon","flying"],"img":"149.png"},{"id":"212","dex":157,"jp":"バクフーン","types":["fire"],"img":"157.png"},{"id":"213","dex":157,"jp":"ヒスイバクフーン","types":["fire","ghost"],"img":"157_1.png"},{"id":"216","dex":160,"jp":"オーダイル","types":["water"],"img":"160.png"},{"id":"225","dex":168,"jp":"アリアドス","types":["bug","poison"],"img":"168.png"},{"id":"238","dex":181,"jp":"デンリュウ","types":["electric"],"img":"181.png"},{"id":"242","dex":184,"jp":"マリルリ","types":["water","fairy"],"img":"184.png"},{"id":"244","dex":186,"jp":"ニョロトノ","types":["water"],"img":"186.png"},{"id":"254","dex":196,"jp":"エーフィ","types":["psychic"],"img":"196.png"},{"id":"255","dex":197,"jp":"ブラッキー","types":["dark"],"img":"197.png"},{"id":"257","dex":199,"jp":"ヤドキング","types":["water","psychic"],"img":"199.png"},{"id":"258","dex":199,"jp":"ガラルヤドキング","types":["poison","psychic"],"img":"199_1.png"},{"id":"264","dex":205,"jp":"フォレトス","types":["bug","steel"],"img":"205.png"},{"id":"267","dex":208,"jp":"ハガネール","types":["steel","ground"],"img":"208.png"},{"id":"273","dex":212,"jp":"ハッサム","types":["bug","steel"],"img":"212.png"},{"id":"276","dex":214,"jp":"ヘラクロス","types":["bug","fighting"],"img":"214.png"},{"id":"292","dex":227,"jp":"エアームド","types":["steel","flying"],"img":"227.png"},{"id":"295","dex":229,"jp":"ヘルガー","types":["dark","fire"],"img":"229.png"},{"id":"315","dex":248,"jp":"バンギラス","types":["rock","dark"],"img":"248.png"},{"id":"352","dex":279,"jp":"ペリッパー","types":["water","flying"],"img":"279.png"},{"id":"355","dex":282,"jp":"サーナイト","types":["psychic","fairy"],"img":"282.png"},{"id":"376","dex":302,"jp":"ヤミラミ","types":["dark","ghost"],"img":"302.png"},{"id":"382","dex":306,"jp":"ボスゴドラ","types":["steel","rock"],"img":"306.png"},{"id":"385","dex":308,"jp":"チャーレム","types":["fighting","psychic"],"img":"308.png"},{"id":"388","dex":310,"jp":"ライボルト","types":["electric"],"img":"310.png"},{"id":"398","dex":319,"jp":"サメハダー","types":["water","dark"],"img":"319.png"},{"id":"403","dex":323,"jp":"バクーダ","types":["fire","ground"],"img":"323.png"},{"id":"405","dex":324,"jp":"コータス","types":["fire"],"img":"324.png"},{"id":"415","dex":334,"jp":"チルタリス","types":["dragon","flying"],"img":"334.png"},{"id":"432","dex":350,"jp":"ミロカロス","types":["water"],"img":"350.png"},{"id":"433","dex":351,"jp":"ポワルン","types":["normal"],"img":"351.png"},{"id":"434","dex":351,"jp":"ポワルン(たいようのすがた)","types":["fire"],"img":"351_1.png"},{"id":"435","dex":351,"jp":"ポワルン(あまみずのすがた)","types":["water"],"img":"351_2.png"},{"id":"436","dex":351,"jp":"ポワルン(ゆきぐものすがた)","types":["ice"],"img":"351_3.png"},{"id":"439","dex":354,"jp":"ジュペッタ","types":["ghost"],"img":"354.png"},{"id":"444","dex":358,"jp":"チリーン","types":["psychic"],"img":"358.png"},{"id":"446","dex":359,"jp":"アブソル","types":["dark"],"img":"359.png"},{"id":"451","dex":362,"jp":"オニゴーリ","types":["ice"],"img":"362.png"},{"id":"489","dex":389,"jp":"ドダイトス","types":["grass","ground"],"img":"389.png"},{"id":"492","dex":392,"jp":"ゴウカザル","types":["fire","fighting"],"img":"392.png"},{"id":"495","dex":395,"jp":"エンペルト","types":["water","steel"],"img":"395.png"},{"id":"506","dex":405,"jp":"レントラー","types":["electric"],"img":"405.png"},{"id":"508","dex":407,"jp":"ロズレイド","types":["grass","poison"],"img":"407.png"},{"id":"510","dex":409,"jp":"ラムパルド","types":["rock"],"img":"409.png"},{"id":"512","dex":411,"jp":"トリデプス","types":["rock","steel"],"img":"411.png"},{"id":"536","dex":428,"jp":"ミミロップ","types":["normal"],"img":"428.png"},{"id":"551","dex":442,"jp":"ミカルゲ","types":["ghost","dark"],"img":"442.png"},{"id":"554","dex":445,"jp":"ガブリアス","types":["dragon","ground"],"img":"445.png"},{"id":"559","dex":448,"jp":"ルカリオ","types":["fighting","steel"],"img":"448.png"},{"id":"563","dex":450,"jp":"カバルドン","types":["ground"],"img":"450.png"},{"id":"568","dex":454,"jp":"ドクロッグ","types":["poison","fighting"],"img":"454.png"},{"id":"574","dex":460,"jp":"ユキノオー","types":["grass","ice"],"img":"460.png"},{"id":"576","dex":461,"jp":"マニューラ","types":["dark","ice"],"img":"461.png"},{"id":"579","dex":464,"jp":"ドサイドン","types":["ground","rock"],"img":"464.png"},{"id":"585","dex":470,"jp":"リーフィア","types":["grass"],"img":"470.png"},{"id":"586","dex":471,"jp":"グレイシア","types":["ice"],"img":"471.png"},{"id":"587","dex":472,"jp":"グライオン","types":["ground","flying"],"img":"472.png"},{"id":"588","dex":473,"jp":"マンムー","types":["ice","ground"],"img":"473.png"},{"id":"590","dex":475,"jp":"エルレイド","types":["psychic","fighting"],"img":"475.png"},{"id":"594","dex":478,"jp":"ユキメノコ","types":["ice","ghost"],"img":"478.png"},{"id":"596","dex":479,"jp":"ロトム","types":["electric","ghost"],"img":"479.png"},{"id":"597","dex":479,"jp":"ヒートロトム","types":["electric","fire"],"img":"479_1.png"},{"id":"598","dex":479,"jp":"ウォッシュロトム","types":["electric","water"],"img":"479_2.png"},{"id":"599","dex":479,"jp":"フロストロトム","types":["electric","ice"],"img":"479_3.png"},{"id":"600","dex":479,"jp":"スピンロトム","types":["electric","flying"],"img":"479_4.png"},{"id":"601","dex":479,"jp":"カットロトム","types":["electric","grass"],"img":"479_5.png"},{"id":"625","dex":497,"jp":"ジャローダ","types":["grass"],"img":"497.png"},{"id":"628","dex":500,"jp":"エンブオー","types":["fire","fighting"],"img":"500.png"},{"id":"632","dex":503,"jp":"ダイケンキ","types":["water"],"img":"503.png"},{"id":"633","dex":503,"jp":"ヒスイダイケンキ","types":["water","dark"],"img":"503_1.png"},{"id":"635","dex":505,"jp":"ミルホッグ","types":["normal"],"img":"505.png"},{"id":"640","dex":510,"jp":"レパルダス","types":["dark"],"img":"510.png"},{"id":"642","dex":512,"jp":"ヤナッキー","types":["grass"],"img":"512.png"},{"id":"644","dex":514,"jp":"バオッキー","types":["fire"],"img":"514.png"},{"id":"646","dex":516,"jp":"ヒヤッキー","types":["water"],"img":"516.png"},{"id":"661","dex":530,"jp":"ドリュウズ","types":["ground","steel"],"img":"530.png"},{"id":"663","dex":531,"jp":"タブンネ","types":["normal"],"img":"531.png"},{"id":"667","dex":534,"jp":"ローブシン","types":["fighting"],"img":"534.png"},{"id":"681","dex":547,"jp":"エルフーン","types":["grass","fairy"],"img":"547.png"},{"id":"690","dex":553,"jp":"ワルビアル","types":["ground","dark"],"img":"553.png"},{"id":"706","dex":563,"jp":"デスカーン","types":["ghost"],"img":"563.png"},{"id":"712","dex":569,"jp":"ダストダス","types":["poison"],"img":"569.png"},{"id":"715","dex":571,"jp":"ゾロアーク","types":["dark"],"img":"571.png"},{"id":"716","dex":571,"jp":"ヒスイゾロアーク","types":["normal","ghost"],"img":"571_1.png"},{"id":"724","dex":579,"jp":"ランクルス","types":["psychic"],"img":"579.png"},{"id":"729","dex":584,"jp":"バイバニラ","types":["ice"],"img":"584.png"},{"id":"738","dex":587,"jp":"エモンガ","types":["electric","flying"],"img":"587.png"},{"id":"763","dex":609,"jp":"シャンデラ","types":["ghost","fire"],"img":"609.png"},{"id":"769","dex":614,"jp":"ツンベアー","types":["ice"],"img":"614.png"},{"id":"773","dex":618,"jp":"マッギョ","types":["ground","electric"],"img":"618.png"},{"id":"774","dex":618,"jp":"ガラルマッギョ","types":["ground","steel"],"img":"618_1.png"},{"id":"779","dex":623,"jp":"ゴルーグ","types":["ground","ghost"],"img":"623.png"},{"id":"793","dex":635,"jp":"サザンドラ","types":["dark","dragon"],"img":"635.png"},{"id":"795","dex":637,"jp":"ウルガモス","types":["bug","fire"],"img":"637.png"},{"id":"817","dex":652,"jp":"ブリガロン","types":["grass","fighting"],"img":"652.png"},{"id":"821","dex":655,"jp":"マフォクシー","types":["fire","psychic"],"img":"655.png"},{"id":"825","dex":658,"jp":"ゲッコウガ","types":["water","dark"],"img":"658.png"},{"id":"828","dex":660,"jp":"ホルード","types":["normal","ground"],"img":"660.png"},{"id":"831","dex":663,"jp":"ファイアロー","types":["fire","flying"],"img":"663.png"},{"id":"834","dex":666,"jp":"ビビヨン","types":["bug","flying"],"img":"666.png"},{"id":"842","dex":670,"jp":"フラエッテ(えいえんのはな)","types":["fairy"],"img":"670_2.png"},{"id":"844","dex":671,"jp":"フラージェス","types":["fairy"],"img":"671.png"},{"id":"848","dex":675,"jp":"ゴロンダ","types":["fighting","dark"],"img":"675.png"},{"id":"849","dex":676,"jp":"トリミアン","types":["normal"],"img":"676.png"},{"id":"851","dex":678,"jp":"ニャオニクス(オス)","types":["psychic"],"img":"678.png"},{"id":"852","dex":678,"jp":"ニャオニクス(メス)","types":["psychic"],"img":"678_1.png"},{"id":"857","dex":681,"jp":"ギルガルド(シールドフォルム)","types":["steel","ghost"],"img":"681.png"},{"id":"858","dex":681,"jp":"ギルガルド(ブレードフォルム)","types":["steel","ghost"],"img":"681_1.png"},{"id":"860","dex":683,"jp":"フレフワン","types":["fairy"],"img":"683.png"},{"id":"862","dex":685,"jp":"ペロリーム","types":["fairy"],"img":"685.png"},{"id":"873","dex":693,"jp":"ブロスター","types":["water"],"img":"693.png"},{"id":"875","dex":695,"jp":"エレザード","types":["electric","normal"],"img":"695.png"},{"id":"877","dex":697,"jp":"ガチゴラス","types":["rock","dragon"],"img":"697.png"},{"id":"879","dex":699,"jp":"アマルルガ","types":["rock","ice"],"img":"699.png"},{"id":"880","dex":700,"jp":"ニンフィア","types":["fairy"],"img":"700.png"},{"id":"881","dex":701,"jp":"ルチャブル","types":["fighting","flying"],"img":"701.png"},{"id":"883","dex":702,"jp":"デデンネ","types":["electric","fairy"],"img":"702.png"},{"id":"888","dex":706,"jp":"ヌメルゴン","types":["dragon"],"img":"706.png"},{"id":"889","dex":706,"jp":"ヒスイヌメルゴン","types":["steel","dragon"],"img":"706_1.png"},{"id":"890","dex":707,"jp":"クレッフィ","types":["steel","fairy"],"img":"707.png"},{"id":"892","dex":709,"jp":"オーロット","types":["ghost","grass"],"img":"709.png"},{"id":"897","dex":711,"jp":"パンプジン(こだましゅ)","types":["ghost","grass"],"img":"711.png"},{"id":"898","dex":711,"jp":"パンプジン(ちゅうだましゅ)","types":["ghost","grass"],"img":"711_1.png"},{"id":"899","dex":711,"jp":"パンプジン(おおだましゅ)","types":["ghost","grass"],"img":"711_2.png"},{"id":"900","dex":711,"jp":"パンプジン(ギガだましゅ)","types":["ghost","grass"],"img":"711_3.png"},{"id":"902","dex":713,"jp":"クレベース","types":["ice"],"img":"713.png"},{"id":"903","dex":713,"jp":"ヒスイクレベース","types":["ice","rock"],"img":"713_1.png"},{"id":"905","dex":715,"jp":"オンバーン","types":["flying","dragon"],"img":"715.png"},{"id":"919","dex":724,"jp":"ジュナイパー","types":["grass","ghost"],"img":"724.png"},{"id":"920","dex":724,"jp":"ヒスイジュナイパー","types":["grass","fighting"],"img":"724_1.png"},{"id":"923","dex":727,"jp":"ガオガエン","types":["fire","dark"],"img":"727.png"},{"id":"926","dex":730,"jp":"アシレーヌ","types":["water","fairy"],"img":"730.png"},{"id":"929","dex":733,"jp":"ドデカバシ","types":["normal","flying"],"img":"733.png"},{"id":"936","dex":740,"jp":"ケケンカニ","types":["fighting","ice"],"img":"740.png"},{"id":"946","dex":745,"jp":"ルガルガン(まひる)","types":["rock"],"img":"745.png"},{"id":"947","dex":745,"jp":"ルガルガン(まよなか)","types":["rock"],"img":"745_1.png"},{"id":"948","dex":745,"jp":"ルガルガン(たそがれ)","types":["rock"],"img":"745_2.png"},{"id":"952","dex":748,"jp":"ドヒドイデ","types":["poison","water"],"img":"748.png"},{"id":"954","dex":750,"jp":"バンバドロ","types":["ground"],"img":"750.png"},{"id":"956","dex":752,"jp":"オニシズクモ","types":["water","bug"],"img":"752.png"},{"id":"962","dex":758,"jp":"エンニュート","types":["poison","fire"],"img":"758.png"},{"id":"967","dex":763,"jp":"アマージョ","types":["grass"],"img":"763.png"},{"id":"969","dex":765,"jp":"ヤレユータン","types":["normal","psychic"],"img":"765.png"},{"id":"970","dex":766,"jp":"ナゲツケサル","types":["fighting"],"img":"766.png"},{"id":"984","dex":778,"jp":"ミミッキュ","types":["ghost","fairy"],"img":"778.png"},{"id":"986","dex":780,"jp":"ジジーロン","types":["normal","dragon"],"img":"780.png"},{"id":"991","dex":784,"jp":"ジャラランガ","types":["dragon","fighting"],"img":"784.png"},{"id":"1037","dex":823,"jp":"アーマーガア","types":["flying","steel"],"img":"823.png"},{"id":"1055","dex":841,"jp":"アップリュー","types":["grass","dragon"],"img":"841.png"},{"id":"1056","dex":842,"jp":"タルップル","types":["grass","dragon"],"img":"842.png"},{"id":"1058","dex":844,"jp":"サダイジャ","types":["ground"],"img":"844.png"},{"id":"1071","dex":855,"jp":"ポットデス","types":["ghost"],"img":"855.png"},{"id":"1075","dex":858,"jp":"ブリムオン","types":["psychic","fairy"],"img":"858.png"},{"id":"1083","dex":866,"jp":"バリコオル","types":["ice","psychic"],"img":"866.png"},{"id":"1084","dex":867,"jp":"デスバーン","types":["ground","ghost"],"img":"867.png"},{"id":"1086","dex":869,"jp":"マホイップ","types":["fairy"],"img":"869.png"},{"id":"1097","dex":877,"jp":"モルペコ","types":["electric","dark"],"img":"877.png"},{"id":"1108","dex":887,"jp":"ドラパルト","types":["dragon","ghost"],"img":"887.png"},{"id":"1126","dex":899,"jp":"アヤシシ","types":["normal","psychic"],"img":"899.png"},{"id":"1127","dex":900,"jp":"バサギリ","types":["bug","rock"],"img":"900.png"},{"id":"1129","dex":902,"jp":"イダイトウ(オス)","types":["water","ghost"],"img":"902.png"},{"id":"1130","dex":902,"jp":"イダイトウ(メス)","types":["water","ghost"],"img":"902_1.png"},{"id":"1131","dex":903,"jp":"オオニューラ","types":["fighting","poison"],"img":"903.png"},{"id":"1137","dex":908,"jp":"マスカーニャ","types":["grass","dark"],"img":"908.png"},{"id":"1140","dex":911,"jp":"ラウドボーン","types":["fire","ghost"],"img":"911.png"},{"id":"1143","dex":914,"jp":"ウェーニバル","types":["water","fighting"],"img":"914.png"},{"id":"1157","dex":925,"jp":"イッカネズミ(3びきかぞく)","types":["normal"],"img":"925.png"},{"id":"1281","dex":925,"jp":"イッカネズミ(4ひきかぞく)","types":["normal"],"img":"925_1.png"},{"id":"1169","dex":934,"jp":"キョジオーン","types":["rock"],"img":"934.png"},{"id":"1172","dex":936,"jp":"グレンアルマ","types":["fire","psychic"],"img":"936.png"},{"id":"1173","dex":937,"jp":"ソウブレイズ","types":["fire","ghost"],"img":"937.png"},{"id":"1175","dex":939,"jp":"ハラバリー","types":["electric"],"img":"939.png"},{"id":"1193","dex":952,"jp":"スコヴィラン","types":["grass","fire"],"img":"952.png"},{"id":"1198","dex":956,"jp":"クエスパトラ","types":["psychic"],"img":"956.png"},{"id":"1201","dex":959,"jp":"デカヌチャン","types":["fairy","steel"],"img":"959.png"},{"id":"1206","dex":964,"jp":"イルカマン(ナイーブ)","types":["water"],"img":"964.png"},{"id":"1207","dex":964,"jp":"イルカマン(マイティ)","types":["water"],"img":"964_1.png"},{"id":"1211","dex":968,"jp":"ミミズズ","types":["steel"],"img":"968.png"},{"id":"1213","dex":970,"jp":"キラフロル","types":["rock","poison"],"img":"970.png"},{"id":"1179","dex":981,"jp":"リキキリン","types":["normal","psychic"],"img":"981.png"},{"id":"1220","dex":983,"jp":"ドドゲザン","types":["dark","steel"],"img":"983.png"},{"id":"1261","dex":1013,"jp":"ヤバソチャ","types":["grass","ghost"],"img":"1013.png"},{"id":"1271","dex":1018,"jp":"ブリジュラス","types":["steel","dragon"],"img":"1018.png"},{"id":"1275","dex":1019,"jp":"カミツオロチ","types":["grass","dragon"],"img":"1019.png"}];
+const ROSTER=[{"id":"3","dex":3,"jp":"フシギバナ","types":["grass","poison"],"img":"003.png"},{"id":"4","dex":3,"jp":"メガフシギバナ","types":["grass","poison"],"img":"003_1.png"},{"id":"7","dex":6,"jp":"リザードン","types":["fire","flying"],"img":"006.png"},{"id":"8","dex":6,"jp":"メガリザードンX","types":["fire","dragon"],"img":"006_1.png"},{"id":"9","dex":6,"jp":"メガリザードンY","types":["fire","flying"],"img":"006_2.png"},{"id":"12","dex":9,"jp":"カメックス","types":["water"],"img":"009.png"},{"id":"13","dex":9,"jp":"メガカメックス","types":["water"],"img":"009_1.png"},{"id":"19","dex":15,"jp":"スピアー","types":["bug","poison"],"img":"015.png"},{"id":"20","dex":15,"jp":"メガスピアー","types":["bug","poison"],"img":"015_1.png"},{"id":"23","dex":18,"jp":"ピジョット","types":["normal","flying"],"img":"018.png"},{"id":"24","dex":18,"jp":"メガピジョット","types":["normal","flying"],"img":"018_1.png"},{"id":"32","dex":24,"jp":"アーボック","types":["poison"],"img":"024.png"},{"id":"33","dex":25,"jp":"ピカチュウ","types":["electric"],"img":"025.png"},{"id":"34","dex":26,"jp":"ライチュウ","types":["electric"],"img":"026.png"},{"id":"35","dex":26,"jp":"アローラライチュウ","types":["electric","psychic"],"img":"026_1.png"},{"id":"49","dex":36,"jp":"ピクシー","types":["fairy"],"img":"036.png"},{"id":"50","dex":36,"jp":"メガピクシー","types":["fairy","flying"],"img":"036_1.png"},{"id":"53","dex":38,"jp":"キュウコン","types":["fire"],"img":"038.png"},{"id":"54","dex":38,"jp":"アローラキュウコン","types":["ice","fairy"],"img":"038_1.png"},{"id":"81","dex":59,"jp":"ウインディ","types":["fire"],"img":"059.png"},{"id":"82","dex":59,"jp":"ヒスイウインディ","types":["fire","rock"],"img":"059_1.png"},{"id":"88","dex":65,"jp":"フーディン","types":["psychic"],"img":"065.png"},{"id":"89","dex":65,"jp":"メガフーディン","types":["psychic"],"img":"065_1.png"},{"id":"92","dex":68,"jp":"カイリキー","types":["fighting"],"img":"068.png"},{"id":"95","dex":71,"jp":"ウツボット","types":["grass","poison"],"img":"071.png"},{"id":"96","dex":71,"jp":"メガウツボット","types":["grass","poison"],"img":"071_1.png"},{"id":"111","dex":80,"jp":"ヤドラン","types":["water","psychic"],"img":"080.png"},{"id":"112","dex":80,"jp":"メガヤドラン","types":["water","psychic"],"img":"080_1.png"},{"id":"113","dex":80,"jp":"ガラルヤドラン","types":["poison","psychic"],"img":"080_2.png"},{"id":"130","dex":94,"jp":"ゲンガー","types":["ghost","poison"],"img":"094.png"},{"id":"131","dex":94,"jp":"メガゲンガー","types":["ghost","poison"],"img":"094_1.png"},{"id":"157","dex":115,"jp":"ガルーラ","types":["normal"],"img":"115.png"},{"id":"158","dex":115,"jp":"メガガルーラ","types":["normal"],"img":"115_1.png"},{"id":"164","dex":121,"jp":"スターミー","types":["water","psychic"],"img":"121.png"},{"id":"165","dex":121,"jp":"メガスターミー","types":["water","psychic"],"img":"121_1.png"},{"id":"172","dex":127,"jp":"カイロス","types":["bug"],"img":"127.png"},{"id":"173","dex":127,"jp":"メガカイロス","types":["bug","flying"],"img":"127_1.png"},{"id":"174","dex":128,"jp":"ケンタロス","types":["normal"],"img":"128.png"},{"id":"1184","dex":128,"jp":"パルデアケンタロス(かくとう)","types":["fighting"],"img":"128_1.png"},{"id":"1185","dex":128,"jp":"パルデアケンタロス(みず)","types":["fighting","water"],"img":"128_2.png"},{"id":"1186","dex":128,"jp":"パルデアケンタロス(ほのお)","types":["fighting","fire"],"img":"128_3.png"},{"id":"176","dex":130,"jp":"ギャラドス","types":["water","flying"],"img":"130.png"},{"id":"177","dex":130,"jp":"メガギャラドス","types":["water","dark"],"img":"130_1.png"},{"id":"179","dex":132,"jp":"メタモン","types":["normal"],"img":"132.png"},{"id":"181","dex":134,"jp":"シャワーズ","types":["water"],"img":"134.png"},{"id":"182","dex":135,"jp":"サンダース","types":["electric"],"img":"135.png"},{"id":"183","dex":136,"jp":"ブースター","types":["fire"],"img":"136.png"},{"id":"189","dex":142,"jp":"プテラ","types":["rock","flying"],"img":"142.png"},{"id":"190","dex":142,"jp":"メガプテラ","types":["rock","flying"],"img":"142_1.png"},{"id":"191","dex":143,"jp":"カビゴン","types":["normal"],"img":"143.png"},{"id":"200","dex":149,"jp":"カイリュー","types":["dragon","flying"],"img":"149.png"},{"id":"201","dex":149,"jp":"メガカイリュー","types":["dragon","flying"],"img":"149_1.png"},{"id":"208","dex":154,"jp":"メガニウム","types":["grass"],"img":"154.png"},{"id":"209","dex":154,"jp":"メガメガニウム","types":["grass","fairy"],"img":"154_1.png"},{"id":"212","dex":157,"jp":"バクフーン","types":["fire"],"img":"157.png"},{"id":"213","dex":157,"jp":"ヒスイバクフーン","types":["fire","ghost"],"img":"157_1.png"},{"id":"216","dex":160,"jp":"オーダイル","types":["water"],"img":"160.png"},{"id":"217","dex":160,"jp":"メガオーダイル","types":["water","dragon"],"img":"160_1.png"},{"id":"225","dex":168,"jp":"アリアドス","types":["bug","poison"],"img":"168.png"},{"id":"238","dex":181,"jp":"デンリュウ","types":["electric"],"img":"181.png"},{"id":"239","dex":181,"jp":"メガデンリュウ","types":["electric","dragon"],"img":"181_1.png"},{"id":"242","dex":184,"jp":"マリルリ","types":["water","fairy"],"img":"184.png"},{"id":"244","dex":186,"jp":"ニョロトノ","types":["water"],"img":"186.png"},{"id":"254","dex":196,"jp":"エーフィ","types":["psychic"],"img":"196.png"},{"id":"255","dex":197,"jp":"ブラッキー","types":["dark"],"img":"197.png"},{"id":"257","dex":199,"jp":"ヤドキング","types":["water","psychic"],"img":"199.png"},{"id":"258","dex":199,"jp":"ガラルヤドキング","types":["poison","psychic"],"img":"199_1.png"},{"id":"264","dex":205,"jp":"フォレトス","types":["bug","steel"],"img":"205.png"},{"id":"267","dex":208,"jp":"ハガネール","types":["steel","ground"],"img":"208.png"},{"id":"268","dex":208,"jp":"メガハガネール","types":["steel","ground"],"img":"208_1.png"},{"id":"273","dex":212,"jp":"ハッサム","types":["bug","steel"],"img":"212.png"},{"id":"274","dex":212,"jp":"メガハッサム","types":["bug","steel"],"img":"212_1.png"},{"id":"276","dex":214,"jp":"ヘラクロス","types":["bug","fighting"],"img":"214.png"},{"id":"277","dex":214,"jp":"メガヘラクロス","types":["bug","fighting"],"img":"214_1.png"},{"id":"292","dex":227,"jp":"エアームド","types":["steel","flying"],"img":"227.png"},{"id":"293","dex":227,"jp":"メガエアームド","types":["steel","flying"],"img":"227_1.png"},{"id":"295","dex":229,"jp":"ヘルガー","types":["dark","fire"],"img":"229.png"},{"id":"296","dex":229,"jp":"メガヘルガー","types":["dark","fire"],"img":"229_1.png"},{"id":"315","dex":248,"jp":"バンギラス","types":["rock","dark"],"img":"248.png"},{"id":"316","dex":248,"jp":"メガバンギラス","types":["rock","dark"],"img":"248_1.png"},{"id":"352","dex":279,"jp":"ペリッパー","types":["water","flying"],"img":"279.png"},{"id":"355","dex":282,"jp":"サーナイト","types":["psychic","fairy"],"img":"282.png"},{"id":"356","dex":282,"jp":"メガサーナイト","types":["psychic","fairy"],"img":"282_1.png"},{"id":"376","dex":302,"jp":"ヤミラミ","types":["dark","ghost"],"img":"302.png"},{"id":"377","dex":302,"jp":"メガヤミラミ","types":["dark","ghost"],"img":"302_1.png"},{"id":"382","dex":306,"jp":"ボスゴドラ","types":["steel","rock"],"img":"306.png"},{"id":"383","dex":306,"jp":"メガボスゴドラ","types":["steel"],"img":"306_1.png"},{"id":"385","dex":308,"jp":"チャーレム","types":["fighting","psychic"],"img":"308.png"},{"id":"386","dex":308,"jp":"メガチャーレム","types":["fighting","psychic"],"img":"308_1.png"},{"id":"388","dex":310,"jp":"ライボルト","types":["electric"],"img":"310.png"},{"id":"389","dex":310,"jp":"メガライボルト","types":["electric"],"img":"310_1.png"},{"id":"398","dex":319,"jp":"サメハダー","types":["water","dark"],"img":"319.png"},{"id":"399","dex":319,"jp":"メガサメハダー","types":["water","dark"],"img":"319_1.png"},{"id":"403","dex":323,"jp":"バクーダ","types":["fire","ground"],"img":"323.png"},{"id":"404","dex":323,"jp":"メガバクーダ","types":["fire","ground"],"img":"323_1.png"},{"id":"405","dex":324,"jp":"コータス","types":["fire"],"img":"324.png"},{"id":"415","dex":334,"jp":"チルタリス","types":["dragon","flying"],"img":"334.png"},{"id":"416","dex":334,"jp":"メガチルタリス","types":["dragon","fairy"],"img":"334_1.png"},{"id":"432","dex":350,"jp":"ミロカロス","types":["water"],"img":"350.png"},{"id":"433","dex":351,"jp":"ポワルン","types":["normal"],"img":"351.png"},{"id":"434","dex":351,"jp":"ポワルン(たいようのすがた)","types":["fire"],"img":"351_1.png"},{"id":"435","dex":351,"jp":"ポワルン(あまみずのすがた)","types":["water"],"img":"351_2.png"},{"id":"436","dex":351,"jp":"ポワルン(ゆきぐものすがた)","types":["ice"],"img":"351_3.png"},{"id":"439","dex":354,"jp":"ジュペッタ","types":["ghost"],"img":"354.png"},{"id":"440","dex":354,"jp":"メガジュペッタ","types":["ghost"],"img":"354_1.png"},{"id":"444","dex":358,"jp":"チリーン","types":["psychic"],"img":"358.png"},{"id":"445","dex":358,"jp":"メガチリーン","types":["psychic","steel"],"img":"358_1.png"},{"id":"446","dex":359,"jp":"アブソル","types":["dark"],"img":"359.png"},{"id":"447","dex":359,"jp":"メガアブソル","types":["dark"],"img":"359_1.png"},{"id":"451","dex":362,"jp":"オニゴーリ","types":["ice"],"img":"362.png"},{"id":"452","dex":362,"jp":"メガオニゴーリ","types":["ice"],"img":"362_1.png"},{"id":"489","dex":389,"jp":"ドダイトス","types":["grass","ground"],"img":"389.png"},{"id":"492","dex":392,"jp":"ゴウカザル","types":["fire","fighting"],"img":"392.png"},{"id":"495","dex":395,"jp":"エンペルト","types":["water","steel"],"img":"395.png"},{"id":"506","dex":405,"jp":"レントラー","types":["electric"],"img":"405.png"},{"id":"508","dex":407,"jp":"ロズレイド","types":["grass","poison"],"img":"407.png"},{"id":"510","dex":409,"jp":"ラムパルド","types":["rock"],"img":"409.png"},{"id":"512","dex":411,"jp":"トリデプス","types":["rock","steel"],"img":"411.png"},{"id":"536","dex":428,"jp":"ミミロップ","types":["normal"],"img":"428.png"},{"id":"537","dex":428,"jp":"メガミミロップ","types":["normal","fighting"],"img":"428_1.png"},{"id":"551","dex":442,"jp":"ミカルゲ","types":["ghost","dark"],"img":"442.png"},{"id":"554","dex":445,"jp":"ガブリアス","types":["dragon","ground"],"img":"445.png"},{"id":"555","dex":445,"jp":"メガガブリアス","types":["dragon","ground"],"img":"445_1.png"},{"id":"559","dex":448,"jp":"ルカリオ","types":["fighting","steel"],"img":"448.png"},{"id":"560","dex":448,"jp":"メガルカリオ","types":["fighting","steel"],"img":"448_1.png"},{"id":"563","dex":450,"jp":"カバルドン","types":["ground"],"img":"450.png"},{"id":"568","dex":454,"jp":"ドクロッグ","types":["poison","fighting"],"img":"454.png"},{"id":"574","dex":460,"jp":"ユキノオー","types":["grass","ice"],"img":"460.png"},{"id":"575","dex":460,"jp":"メガユキノオー","types":["grass","ice"],"img":"460_1.png"},{"id":"576","dex":461,"jp":"マニューラ","types":["dark","ice"],"img":"461.png"},{"id":"579","dex":464,"jp":"ドサイドン","types":["ground","rock"],"img":"464.png"},{"id":"585","dex":470,"jp":"リーフィア","types":["grass"],"img":"470.png"},{"id":"586","dex":471,"jp":"グレイシア","types":["ice"],"img":"471.png"},{"id":"587","dex":472,"jp":"グライオン","types":["ground","flying"],"img":"472.png"},{"id":"588","dex":473,"jp":"マンムー","types":["ice","ground"],"img":"473.png"},{"id":"590","dex":475,"jp":"エルレイド","types":["psychic","fighting"],"img":"475.png"},{"id":"591","dex":475,"jp":"メガエルレイド","types":["psychic","fighting"],"img":"475_1.png"},{"id":"594","dex":478,"jp":"ユキメノコ","types":["ice","ghost"],"img":"478.png"},{"id":"595","dex":478,"jp":"メガユキメノコ","types":["ice","ghost"],"img":"478_1.png"},{"id":"596","dex":479,"jp":"ロトム","types":["electric","ghost"],"img":"479.png"},{"id":"597","dex":479,"jp":"ヒートロトム","types":["electric","fire"],"img":"479_1.png"},{"id":"598","dex":479,"jp":"ウォッシュロトム","types":["electric","water"],"img":"479_2.png"},{"id":"599","dex":479,"jp":"フロストロトム","types":["electric","ice"],"img":"479_3.png"},{"id":"600","dex":479,"jp":"スピンロトム","types":["electric","flying"],"img":"479_4.png"},{"id":"601","dex":479,"jp":"カットロトム","types":["electric","grass"],"img":"479_5.png"},{"id":"625","dex":497,"jp":"ジャローダ","types":["grass"],"img":"497.png"},{"id":"628","dex":500,"jp":"エンブオー","types":["fire","fighting"],"img":"500.png"},{"id":"629","dex":500,"jp":"メガエンブオー","types":["fire","fighting"],"img":"500_1.png"},{"id":"632","dex":503,"jp":"ダイケンキ","types":["water"],"img":"503.png"},{"id":"633","dex":503,"jp":"ヒスイダイケンキ","types":["water","dark"],"img":"503_1.png"},{"id":"635","dex":505,"jp":"ミルホッグ","types":["normal"],"img":"505.png"},{"id":"640","dex":510,"jp":"レパルダス","types":["dark"],"img":"510.png"},{"id":"642","dex":512,"jp":"ヤナッキー","types":["grass"],"img":"512.png"},{"id":"644","dex":514,"jp":"バオッキー","types":["fire"],"img":"514.png"},{"id":"646","dex":516,"jp":"ヒヤッキー","types":["water"],"img":"516.png"},{"id":"661","dex":530,"jp":"ドリュウズ","types":["ground","steel"],"img":"530.png"},{"id":"662","dex":530,"jp":"メガドリュウズ","types":["ground","steel"],"img":"530_1.png"},{"id":"663","dex":531,"jp":"タブンネ","types":["normal"],"img":"531.png"},{"id":"664","dex":531,"jp":"メガタブンネ","types":["normal","fairy"],"img":"531_1.png"},{"id":"667","dex":534,"jp":"ローブシン","types":["fighting"],"img":"534.png"},{"id":"681","dex":547,"jp":"エルフーン","types":["grass","fairy"],"img":"547.png"},{"id":"690","dex":553,"jp":"ワルビアル","types":["ground","dark"],"img":"553.png"},{"id":"706","dex":563,"jp":"デスカーン","types":["ghost"],"img":"563.png"},{"id":"712","dex":569,"jp":"ダストダス","types":["poison"],"img":"569.png"},{"id":"715","dex":571,"jp":"ゾロアーク","types":["dark"],"img":"571.png"},{"id":"716","dex":571,"jp":"ヒスイゾロアーク","types":["normal","ghost"],"img":"571_1.png"},{"id":"724","dex":579,"jp":"ランクルス","types":["psychic"],"img":"579.png"},{"id":"729","dex":584,"jp":"バイバニラ","types":["ice"],"img":"584.png"},{"id":"738","dex":587,"jp":"エモンガ","types":["electric","flying"],"img":"587.png"},{"id":"763","dex":609,"jp":"シャンデラ","types":["ghost","fire"],"img":"609.png"},{"id":"764","dex":609,"jp":"メガシャンデラ","types":["ghost","fire"],"img":"609_1.png"},{"id":"769","dex":614,"jp":"ツンベアー","types":["ice"],"img":"614.png"},{"id":"773","dex":618,"jp":"マッギョ","types":["ground","electric"],"img":"618.png"},{"id":"774","dex":618,"jp":"ガラルマッギョ","types":["ground","steel"],"img":"618_1.png"},{"id":"779","dex":623,"jp":"ゴルーグ","types":["ground","ghost"],"img":"623.png"},{"id":"780","dex":623,"jp":"メガゴルーグ","types":["ground","ghost"],"img":"623_1.png"},{"id":"793","dex":635,"jp":"サザンドラ","types":["dark","dragon"],"img":"635.png"},{"id":"795","dex":637,"jp":"ウルガモス","types":["bug","fire"],"img":"637.png"},{"id":"817","dex":652,"jp":"ブリガロン","types":["grass","fighting"],"img":"652.png"},{"id":"818","dex":652,"jp":"メガブリガロン","types":["grass","fighting"],"img":"652_1.png"},{"id":"821","dex":655,"jp":"マフォクシー","types":["fire","psychic"],"img":"655.png"},{"id":"822","dex":655,"jp":"メガマフォクシー","types":["fire","psychic"],"img":"655_1.png"},{"id":"825","dex":658,"jp":"ゲッコウガ","types":["water","dark"],"img":"658.png"},{"id":"826","dex":658,"jp":"メガゲッコウガ","types":["water","dark"],"img":"658_1.png"},{"id":"828","dex":660,"jp":"ホルード","types":["normal","ground"],"img":"660.png"},{"id":"831","dex":663,"jp":"ファイアロー","types":["fire","flying"],"img":"663.png"},{"id":"834","dex":666,"jp":"ビビヨン","types":["bug","flying"],"img":"666.png"},{"id":"842","dex":670,"jp":"フラエッテ(えいえんのはな)","types":["fairy"],"img":"670_2.png"},{"id":"843","dex":670,"jp":"メガフラエッテ(えいえんのはな)","types":["fairy"],"img":"670_1.png"},{"id":"844","dex":671,"jp":"フラージェス","types":["fairy"],"img":"671.png"},{"id":"848","dex":675,"jp":"ゴロンダ","types":["fighting","dark"],"img":"675.png"},{"id":"849","dex":676,"jp":"トリミアン","types":["normal"],"img":"676.png"},{"id":"851","dex":678,"jp":"ニャオニクス(オス)","types":["psychic"],"img":"678.png"},{"id":"852","dex":678,"jp":"ニャオニクス(メス)","types":["psychic"],"img":"678_1.png"},{"id":"853","dex":678,"jp":"メガニャオニクス(オス)","types":["psychic"],"img":"678_3.png"},{"id":"854","dex":678,"jp":"メガニャオニクス(メス)","types":["psychic"],"img":"678_4.png"},{"id":"857","dex":681,"jp":"ギルガルド(シールドフォルム)","types":["steel","ghost"],"img":"681.png"},{"id":"858","dex":681,"jp":"ギルガルド(ブレードフォルム)","types":["steel","ghost"],"img":"681_1.png"},{"id":"860","dex":683,"jp":"フレフワン","types":["fairy"],"img":"683.png"},{"id":"862","dex":685,"jp":"ペロリーム","types":["fairy"],"img":"685.png"},{"id":"873","dex":693,"jp":"ブロスター","types":["water"],"img":"693.png"},{"id":"875","dex":695,"jp":"エレザード","types":["electric","normal"],"img":"695.png"},{"id":"877","dex":697,"jp":"ガチゴラス","types":["rock","dragon"],"img":"697.png"},{"id":"879","dex":699,"jp":"アマルルガ","types":["rock","ice"],"img":"699.png"},{"id":"880","dex":700,"jp":"ニンフィア","types":["fairy"],"img":"700.png"},{"id":"881","dex":701,"jp":"ルチャブル","types":["fighting","flying"],"img":"701.png"},{"id":"882","dex":701,"jp":"メガルチャブル","types":["fighting","flying"],"img":"701_1.png"},{"id":"883","dex":702,"jp":"デデンネ","types":["electric","fairy"],"img":"702.png"},{"id":"888","dex":706,"jp":"ヌメルゴン","types":["dragon"],"img":"706.png"},{"id":"889","dex":706,"jp":"ヒスイヌメルゴン","types":["steel","dragon"],"img":"706_1.png"},{"id":"890","dex":707,"jp":"クレッフィ","types":["steel","fairy"],"img":"707.png"},{"id":"892","dex":709,"jp":"オーロット","types":["ghost","grass"],"img":"709.png"},{"id":"897","dex":711,"jp":"パンプジン(こだましゅ)","types":["ghost","grass"],"img":"711.png"},{"id":"898","dex":711,"jp":"パンプジン(ちゅうだましゅ)","types":["ghost","grass"],"img":"711_1.png"},{"id":"899","dex":711,"jp":"パンプジン(おおだましゅ)","types":["ghost","grass"],"img":"711_2.png"},{"id":"900","dex":711,"jp":"パンプジン(ギガだましゅ)","types":["ghost","grass"],"img":"711_3.png"},{"id":"902","dex":713,"jp":"クレベース","types":["ice"],"img":"713.png"},{"id":"903","dex":713,"jp":"ヒスイクレベース","types":["ice","rock"],"img":"713_1.png"},{"id":"905","dex":715,"jp":"オンバーン","types":["flying","dragon"],"img":"715.png"},{"id":"919","dex":724,"jp":"ジュナイパー","types":["grass","ghost"],"img":"724.png"},{"id":"920","dex":724,"jp":"ヒスイジュナイパー","types":["grass","fighting"],"img":"724_1.png"},{"id":"923","dex":727,"jp":"ガオガエン","types":["fire","dark"],"img":"727.png"},{"id":"926","dex":730,"jp":"アシレーヌ","types":["water","fairy"],"img":"730.png"},{"id":"929","dex":733,"jp":"ドデカバシ","types":["normal","flying"],"img":"733.png"},{"id":"936","dex":740,"jp":"ケケンカニ","types":["fighting","ice"],"img":"740.png"},{"id":"937","dex":740,"jp":"メガケケンカニ","types":["fighting","ice"],"img":"740_1.png"},{"id":"946","dex":745,"jp":"ルガルガン(まひる)","types":["rock"],"img":"745.png"},{"id":"947","dex":745,"jp":"ルガルガン(まよなか)","types":["rock"],"img":"745_1.png"},{"id":"948","dex":745,"jp":"ルガルガン(たそがれ)","types":["rock"],"img":"745_2.png"},{"id":"952","dex":748,"jp":"ドヒドイデ","types":["poison","water"],"img":"748.png"},{"id":"954","dex":750,"jp":"バンバドロ","types":["ground"],"img":"750.png"},{"id":"956","dex":752,"jp":"オニシズクモ","types":["water","bug"],"img":"752.png"},{"id":"962","dex":758,"jp":"エンニュート","types":["poison","fire"],"img":"758.png"},{"id":"967","dex":763,"jp":"アマージョ","types":["grass"],"img":"763.png"},{"id":"969","dex":765,"jp":"ヤレユータン","types":["normal","psychic"],"img":"765.png"},{"id":"970","dex":766,"jp":"ナゲツケサル","types":["fighting"],"img":"766.png"},{"id":"984","dex":778,"jp":"ミミッキュ","types":["ghost","fairy"],"img":"778.png"},{"id":"986","dex":780,"jp":"ジジーロン","types":["normal","dragon"],"img":"780.png"},{"id":"987","dex":780,"jp":"メガジジーロン","types":["normal","dragon"],"img":"780_1.png"},{"id":"991","dex":784,"jp":"ジャラランガ","types":["dragon","fighting"],"img":"784.png"},{"id":"1037","dex":823,"jp":"アーマーガア","types":["flying","steel"],"img":"823.png"},{"id":"1055","dex":841,"jp":"アップリュー","types":["grass","dragon"],"img":"841.png"},{"id":"1056","dex":842,"jp":"タルップル","types":["grass","dragon"],"img":"842.png"},{"id":"1058","dex":844,"jp":"サダイジャ","types":["ground"],"img":"844.png"},{"id":"1071","dex":855,"jp":"ポットデス","types":["ghost"],"img":"855.png"},{"id":"1075","dex":858,"jp":"ブリムオン","types":["psychic","fairy"],"img":"858.png"},{"id":"1083","dex":866,"jp":"バリコオル","types":["ice","psychic"],"img":"866.png"},{"id":"1084","dex":867,"jp":"デスバーン","types":["ground","ghost"],"img":"867.png"},{"id":"1086","dex":869,"jp":"マホイップ","types":["fairy"],"img":"869.png"},{"id":"1097","dex":877,"jp":"モルペコ","types":["electric","dark"],"img":"877.png"},{"id":"1108","dex":887,"jp":"ドラパルト","types":["dragon","ghost"],"img":"887.png"},{"id":"1126","dex":899,"jp":"アヤシシ","types":["normal","psychic"],"img":"899.png"},{"id":"1127","dex":900,"jp":"バサギリ","types":["bug","rock"],"img":"900.png"},{"id":"1129","dex":902,"jp":"イダイトウ(オス)","types":["water","ghost"],"img":"902.png"},{"id":"1130","dex":902,"jp":"イダイトウ(メス)","types":["water","ghost"],"img":"902_1.png"},{"id":"1131","dex":903,"jp":"オオニューラ","types":["fighting","poison"],"img":"903.png"},{"id":"1137","dex":908,"jp":"マスカーニャ","types":["grass","dark"],"img":"908.png"},{"id":"1140","dex":911,"jp":"ラウドボーン","types":["fire","ghost"],"img":"911.png"},{"id":"1143","dex":914,"jp":"ウェーニバル","types":["water","fighting"],"img":"914.png"},{"id":"1157","dex":925,"jp":"イッカネズミ(3びきかぞく)","types":["normal"],"img":"925.png"},{"id":"1281","dex":925,"jp":"イッカネズミ(4ひきかぞく)","types":["normal"],"img":"925_1.png"},{"id":"1169","dex":934,"jp":"キョジオーン","types":["rock"],"img":"934.png"},{"id":"1172","dex":936,"jp":"グレンアルマ","types":["fire","psychic"],"img":"936.png"},{"id":"1173","dex":937,"jp":"ソウブレイズ","types":["fire","ghost"],"img":"937.png"},{"id":"1175","dex":939,"jp":"ハラバリー","types":["electric"],"img":"939.png"},{"id":"1193","dex":952,"jp":"スコヴィラン","types":["grass","fire"],"img":"952.png"},{"id":"1194","dex":952,"jp":"メガスコヴィラン","types":["grass","fire"],"img":"952_1.png"},{"id":"1198","dex":956,"jp":"クエスパトラ","types":["psychic"],"img":"956.png"},{"id":"1201","dex":959,"jp":"デカヌチャン","types":["fairy","steel"],"img":"959.png"},{"id":"1206","dex":964,"jp":"イルカマン(ナイーブ)","types":["water"],"img":"964.png"},{"id":"1207","dex":964,"jp":"イルカマン(マイティ)","types":["water"],"img":"964_1.png"},{"id":"1211","dex":968,"jp":"ミミズズ","types":["steel"],"img":"968.png"},{"id":"1213","dex":970,"jp":"キラフロル","types":["rock","poison"],"img":"970.png"},{"id":"1214","dex":970,"jp":"メガキラフロル","types":["rock","poison"],"img":"970_1.png"},{"id":"1179","dex":981,"jp":"リキキリン","types":["normal","psychic"],"img":"981.png"},{"id":"1220","dex":983,"jp":"ドドゲザン","types":["dark","steel"],"img":"983.png"},{"id":"1261","dex":1013,"jp":"ヤバソチャ","types":["grass","ghost"],"img":"1013.png"},{"id":"1271","dex":1018,"jp":"ブリジュラス","types":["steel","dragon"],"img":"1018.png"},{"id":"1275","dex":1019,"jp":"カミツオロチ","types":["grass","dragon"],"img":"1019.png"}];
 
 function TypeIconButton({type, selectedNum, onClick}) {
   return (
@@ -295,10 +324,13 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
     up.moves?.forEach(mv => {
       if (!mv.type) return;
       const m = defensiveMult(mv.type, opp.types);
-      if (m >= 2) hits.push({ userIdx:pi, userJp:up.jp, moveName:mv.name || '(無名)', moveType:mv.type, mult:m });
+      if (m >= 2) {
+        const stab = up.types.includes(mv.type);
+        hits.push({ userIdx:pi, userJp:up.jp, moveName:mv.name || '(無名)', moveType:mv.type, mult:m, stab, score: m * (stab?1.5:1) });
+      }
     });
   });
-  hits.sort((a,b)=>b.mult - a.mult);
+  hits.sort((a,b)=>b.score - a.score);
 
   return (
     <div className="border rounded-lg p-3 bg-white">
@@ -357,6 +389,7 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
             {hits.map((h, i) => (
               <div key={i} className="flex items-center gap-1.5 text-xs">
                 <MultBadge mult={h.mult} />
+                {h.stab && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-300 text-yellow-900">一致</span>}
                 <TypeBadge type={h.moveType} />
                 <span className="truncate flex-1">
                   <span className="font-medium">{h.userJp}</span>
@@ -367,6 +400,202 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ====== 分析パネル ======
+function AnalysisPanel({userTeam, opponents}) {
+  const [open, setOpen] = useState(true);
+  const users = userTeam.filter(Boolean);
+  const opps = opponents.filter(Boolean);
+  const ready = users.length >= 1 && opps.length >= 1;
+
+  // 推奨選出3体（全探索）
+  const trio = useMemo(() => {
+    if (users.length < 3 || opps.length === 0) return null;
+    const combos = combinations(users, 3);
+    let best = null;
+    for (const combo of combos) {
+      let covered = 0, scoreSum = 0;
+      for (const opp of opps) {
+        const hits = combo.map(u => bestHitScore(u, opp).score);
+        const mx = Math.max(...hits);
+        if (mx >= 2) covered++;
+        scoreSum += mx;
+      }
+      if (!best || covered > best.covered || (covered===best.covered && scoreSum > best.scoreSum)) {
+        best = {combo, covered, scoreSum};
+      }
+    }
+    return best;
+  }, [userTeam, opponents]);
+
+  // マトリクス
+  const matrix = useMemo(() => {
+    return users.map(u => opps.map(o => bestHitScore(u, o)));
+  }, [userTeam, opponents]);
+
+  // 共通弱点ランキング
+  const commonWeak = useMemo(() => {
+    return TYPES.map(atk => {
+      let w2=0, w4=0, imm=0;
+      opps.forEach(o => {
+        const m = defensiveMult(atk, o.types);
+        if (m === 4) w4++;
+        else if (m === 2) w2++;
+        if (m === 0) imm++;
+      });
+      return {type:atk, w2, w4, imm, effective: w2 + w4*2};
+    }).filter(x=>x.w2>0||x.w4>0).sort((a,b)=>b.effective-a.effective || b.w4-a.w4);
+  }, [opponents]);
+
+  // 自軍の穴（全員が弱点 >1 のタイプ）
+  const holes = useMemo(() => {
+    if (users.length === 0) return [];
+    return TYPES.filter(atk => users.every(u => defensiveMult(atk, u.types) > 1));
+  }, [userTeam]);
+
+  // カバー率
+  const coverage = useMemo(() => {
+    const moveTypes = new Set();
+    users.forEach(u => (u.moves||[]).forEach(m => m.type && moveTypes.add(m.type)));
+    let covered = 0;
+    TYPES.forEach(def => {
+      const canHit = [...moveTypes].some(atk => defensiveMult(atk, [def]) >= 2);
+      if (canHit) covered++;
+    });
+    return {covered, total:18, moveTypes:[...moveTypes]};
+  }, [userTeam]);
+
+  if (!ready) return null;
+
+  const scoreColor = (s) => {
+    if (s >= 4) return 'bg-red-600 text-white';
+    if (s >= 3) return 'bg-red-500 text-white';
+    if (s >= 2) return 'bg-orange-500 text-white';
+    if (s >= 1) return 'bg-gray-200 text-gray-700';
+    if (s > 0) return 'bg-blue-400 text-white';
+    return 'bg-gray-800 text-white';
+  };
+  const fmt = s => s===0?'0':(s>=1?(s%1===0?s.toString():s.toFixed(1)):(s.toString().replace('0.','.')));
+
+  return (
+    <div className="bg-white border rounded-lg mb-3">
+      <button onClick={()=>setOpen(!open)} className="w-full flex items-center justify-between p-3 hover:bg-gray-50">
+        <span className="text-sm font-bold text-gray-700">📊 分析パネル {open?'▼':'▶'}</span>
+        <span className="text-xs text-gray-400">自軍{users.length}体 / 相手{opps.length}体</span>
+      </button>
+      {open && (
+        <div className="border-t p-3 space-y-4">
+          {/* 推奨選出3体 */}
+          {users.length >= 3 && trio && (
+            <div>
+              <div className="text-xs font-bold text-gray-600 mb-1.5">⭐ 推奨選出3体（{trio.covered}/{opps.length}体抑制）</div>
+              <div className="flex gap-2 flex-wrap">
+                {trio.combo.map((u,i) => (
+                  <div key={i} className="border rounded p-1.5 bg-blue-50 flex items-center gap-1.5">
+                    <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-10 h-10 object-contain" />
+                    <div className="text-xs font-bold">{u.jp}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* マトリクス 6x6 */}
+          <div>
+            <div className="text-xs font-bold text-gray-600 mb-1.5">🔲 相性マトリクス（自軍 × 相手 / 一致技込み倍率）</div>
+            <div className="overflow-x-auto">
+              <table className="text-xs border-collapse">
+                <thead>
+                  <tr>
+                    <th className="p-1 border bg-gray-50"></th>
+                    {opps.map((o,i) => (
+                      <th key={i} className="p-1 border bg-gray-50 text-center">
+                        <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-8 h-8 object-contain mx-auto" />
+                        <div className="text-[9px] truncate max-w-[60px]">{o.jp}</div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u,ui) => (
+                    <tr key={ui}>
+                      <td className="p-1 border bg-gray-50">
+                        <div className="flex items-center gap-1">
+                          <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-8 h-8 object-contain" />
+                          <div className="text-[10px] truncate max-w-[70px]">{u.jp}</div>
+                        </div>
+                      </td>
+                      {opps.map((o,oi) => {
+                        const h = matrix[ui][oi];
+                        return (
+                          <td key={oi} className={`p-1 border text-center font-bold ${scoreColor(h.score)}`}>
+                            <div>{fmt(h.score)}×</div>
+                            {h.stab && <div className="text-[8px] font-normal">一致</div>}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 相手パ共通弱点 */}
+          {commonWeak.length > 0 && (
+            <div>
+              <div className="text-xs font-bold text-gray-600 mb-1.5">🎯 相手パ共通弱点ランキング</div>
+              <div className="space-y-1">
+                {commonWeak.slice(0,8).map((w,i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span className="w-5 text-gray-400">{i+1}.</span>
+                    <TypeBadge type={w.type} />
+                    <span className="text-gray-600">
+                      {w.w4>0 && <span className="text-red-600 font-bold">4×が{w.w4}体 </span>}
+                      {w.w2>0 && <span className="text-orange-600">2×が{w.w2}体</span>}
+                      {w.imm>0 && <span className="text-gray-400 ml-1">（無効{w.imm}体）</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 自軍の穴 */}
+          <div>
+            <div className="text-xs font-bold text-gray-600 mb-1.5">⚠ 自軍の穴（全員が弱点のタイプ）</div>
+            {holes.length === 0 ? (
+              <div className="text-xs text-green-600">穴なし ✓</div>
+            ) : (
+              <div className="flex gap-1 flex-wrap">
+                {holes.map(t => <TypeBadge key={t} type={t} size="lg" />)}
+              </div>
+            )}
+          </div>
+
+          {/* カバー率 */}
+          <div>
+            <div className="text-xs font-bold text-gray-600 mb-1.5">
+              📈 攻撃カバー率 {coverage.covered}/{coverage.total}タイプ（{Math.round(coverage.covered/coverage.total*100)}%）
+            </div>
+            <div className="flex gap-1 flex-wrap">
+              {TYPES.map(def => {
+                const canHit = coverage.moveTypes.some(atk => defensiveMult(atk, [def]) >= 2);
+                return (
+                  <div key={def} className={`flex items-center gap-0.5 px-1 py-0.5 rounded ${canHit?'bg-green-50':'bg-gray-100 opacity-50'}`}>
+                    <TypeBadge type={def} />
+                    <span className="text-[9px] font-bold">{canHit?'○':'×'}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-gray-500 mt-1">登録技タイプ: {coverage.moveTypes.length>0 ? coverage.moveTypes.map(t=>TYPE_JP[t]).join('・') : 'なし'}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -397,6 +626,7 @@ function BattleView({opponents, setOpponents, userTeam}) {
           自軍が未登録です。上の「自軍登録」タブから先に登録してください（抜群技の判定に必要）。
         </div>
       )}
+      <AnalysisPanel userTeam={userTeam} opponents={opponents} />
       <div className="text-sm text-gray-600">相手パーティ ({filled}/6体)</div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {[0,1,2,3,4,5].map(i => (
@@ -411,25 +641,107 @@ function BattleView({opponents, setOpponents, userTeam}) {
   );
 }
 
+// ====== チームスロット選択バー ======
+function TeamSlotBar({teams, activeIdx, setActiveIdx, setTeams}) {
+  const [editing, setEditing] = useState(false);
+  const current = teams[activeIdx];
+  const addTeam = () => {
+    const newTeams = [...teams, {name:`チーム${teams.length+1}`, slots:[null,null,null,null,null,null]}];
+    setTeams(newTeams);
+    setActiveIdx(newTeams.length-1);
+  };
+  const delTeam = () => {
+    if (teams.length <= 1) return;
+    if (!confirm(`「${current.name}」を削除しますか？`)) return;
+    const newTeams = teams.filter((_,i)=>i!==activeIdx);
+    setTeams(newTeams);
+    setActiveIdx(Math.max(0, activeIdx-1));
+  };
+  const dupTeam = () => {
+    const copy = JSON.parse(JSON.stringify(current));
+    copy.name = current.name + ' コピー';
+    const newTeams = [...teams, copy];
+    setTeams(newTeams);
+    setActiveIdx(newTeams.length-1);
+  };
+  const renameTeam = (name) => {
+    const newTeams = teams.map((t,i)=> i===activeIdx ? {...t, name} : t);
+    setTeams(newTeams);
+  };
+  return (
+    <div className="bg-white border rounded-lg p-2 mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-bold text-gray-600 whitespace-nowrap">チーム</span>
+        <div className="flex-1 overflow-x-auto flex gap-1">
+          {teams.map((t,i) => (
+            <button key={i} onClick={()=>{setActiveIdx(i);setEditing(false);}}
+              className={`px-3 py-1 text-xs font-bold rounded whitespace-nowrap transition ${i===activeIdx?'bg-blue-600 text-white':'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              {t.name}
+            </button>
+          ))}
+          <button onClick={addTeam} title="新規チーム追加"
+            className="px-2 py-1 text-xs font-bold rounded bg-green-100 text-green-700 hover:bg-green-200 whitespace-nowrap">
+            <IconPlus className="w-3 h-3 inline" /> 追加
+          </button>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {editing ? (
+          <input autoFocus type="text" value={current.name}
+            onChange={e=>renameTeam(e.target.value)}
+            onBlur={()=>setEditing(false)}
+            onKeyDown={e=>{if(e.key==='Enter')setEditing(false);}}
+            className="border rounded px-2 py-0.5 text-xs flex-1 min-w-[140px]" />
+        ) : (
+          <>
+            <button onClick={()=>setEditing(true)} className="text-xs text-blue-600 hover:underline">名前変更</button>
+            <button onClick={dupTeam} className="text-xs text-blue-600 hover:underline">複製</button>
+            {teams.length > 1 && (
+              <button onClick={delTeam} className="text-xs text-red-600 hover:underline">削除</button>
+            )}
+            <span className="text-[10px] text-gray-400 ml-auto">{teams.length}チーム保存中</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ====== メイン ======
 function App() {
   const [tab, setTab] = useState('battle');
-  const [userTeam, setUserTeam] = useState([null,null,null,null,null,null]);
+  const [teams, setTeams] = useState([{name:'チーム1', slots:[null,null,null,null,null,null]}]);
+  const [activeIdx, setActiveIdx] = useState(0);
   const [opponents, setOpponents] = useState([null,null,null,null,null,null]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('user_team_v1');
-      if (raw) setUserTeam(JSON.parse(raw));
+      const rawV2 = localStorage.getItem('user_teams_v2');
+      if (rawV2) {
+        const d = JSON.parse(rawV2);
+        if (d.teams?.length) { setTeams(d.teams); setActiveIdx(d.activeIdx ?? 0); }
+      } else {
+        // 旧v1からマイグレーション
+        const rawV1 = localStorage.getItem('user_team_v1');
+        if (rawV1) {
+          const slots = JSON.parse(rawV1);
+          setTeams([{name:'チーム1', slots}]);
+        }
+      }
     } catch(e) {}
     setLoaded(true);
   }, []);
 
   useEffect(() => {
     if (!loaded) return;
-    try { localStorage.setItem('user_team_v1', JSON.stringify(userTeam)); } catch(e) {}
-  }, [userTeam, loaded]);
+    try { localStorage.setItem('user_teams_v2', JSON.stringify({teams, activeIdx})); } catch(e) {}
+  }, [teams, activeIdx, loaded]);
+
+  const userTeam = teams[activeIdx]?.slots || [null,null,null,null,null,null];
+  const setUserTeam = (slots) => {
+    setTeams(teams.map((t,i)=> i===activeIdx ? {...t, slots} : t));
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -438,6 +750,8 @@ function App() {
           <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助</h1>
           <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
         </header>
+
+        <TeamSlotBar teams={teams} activeIdx={activeIdx} setActiveIdx={setActiveIdx} setTeams={setTeams} />
 
         <div className="flex gap-1 mb-4 border-b">
           <button onClick={()=>setTab('battle')}
@@ -456,7 +770,7 @@ function App() {
         }
 
         <footer className="mt-8 text-xs text-gray-400 text-center">
-          データ: PokeAPI / sindresorhus/pokemon
+          データ: GameWith / PokeAPI
         </footer>
       </div>
     </div>
