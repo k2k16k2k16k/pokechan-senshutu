@@ -88,6 +88,34 @@ function bestHitScore(userPoke, opp) {
   return best;
 }
 
+// チーム総合評価 (高いほど良い)
+function evaluateTeam(team) {
+  const filled = team.filter(Boolean);
+  if (filled.length === 0) return 0;
+  let weakCoverage = 0;
+  let holes = 0;
+  TYPES.forEach(atk => {
+    let resist = 0, weak = 0;
+    filled.forEach(u => {
+      const m = defensiveMult(atk, u.types);
+      if (m > 1) weak++;
+      else if (m < 1) resist++;
+    });
+    weakCoverage += (resist - weak);
+    if (filled.every(u => defensiveMult(atk, u.types) > 1)) holes++;
+  });
+  const typeSet = new Set();
+  filled.forEach(u => u.types.forEach(t => typeSet.add(t)));
+  const diversity = typeSet.size;
+  const combos = {};
+  filled.forEach(u => {
+    const key = [...u.types].sort().join(',');
+    combos[key] = (combos[key]||0) + 1;
+  });
+  const dup = Object.values(combos).reduce((s,c)=>s+(c>1?c-1:0),0);
+  return weakCoverage + diversity - holes*30 - dup*5;
+}
+
 // C(n,k) 組み合わせ列挙
 function combinations(arr, k) {
   const res = [];
@@ -222,6 +250,154 @@ function PokemonPicker({onSelect, onClose}) {
   );
 }
 
+// ====== 補完候補サジェスト ======
+function TeamBuilderSuggest({team, onAdd}) {
+  const [mode, setMode] = useState('1');
+  const [results, setResults] = useState(null);
+  const [computing, setComputing] = useState(false);
+  const filled = team.filter(Boolean);
+  const emptyCount = 6 - filled.length;
+
+  const reasonsFor = (c, baseFilled) => {
+    const reasons = [];
+    const oldHoles = TYPES.filter(atk => baseFilled.every(u => defensiveMult(atk, u.types) > 1));
+    const newHoles = TYPES.filter(atk => [...baseFilled, c].every(u => defensiveMult(atk, u.types) > 1));
+    const removedHoles = oldHoles.filter(h => !newHoles.includes(h));
+    if (removedHoles.length) reasons.push({kind:'穴解消', types: removedHoles});
+    const resolved = [];
+    TYPES.forEach(atk => {
+      const oldWeak = baseFilled.filter(u => defensiveMult(atk, u.types) > 1).length;
+      if (oldWeak >= 2 && defensiveMult(atk, c.types) < 1) resolved.push(atk);
+    });
+    if (resolved.length) reasons.push({kind:'共通弱点耐性', types: resolved});
+    return reasons;
+  };
+
+  const compute = () => {
+    setComputing(true);
+    setTimeout(() => {
+      const existing = new Set(filled.map(u => u.id));
+      const candidates = ROSTER.filter(p => !existing.has(p.id));
+      const baseScore = evaluateTeam(filled);
+      if (mode === '1') {
+        const scored = candidates.map(c => ({
+          c,
+          delta: evaluateTeam([...filled, c]) - baseScore,
+          reasons: reasonsFor(c, filled)
+        }));
+        scored.sort((a,b) => b.delta - a.delta);
+        setResults({type:'single', list: scored.slice(0, 15)});
+      } else {
+        // 2枠探索: 全候補×全候補（差分法で高速化）
+        const singles = candidates.map(c => ({c, score: evaluateTeam([...filled, c])}));
+        singles.sort((a,b) => b.score - a.score);
+        const top = singles.slice(0, 80).map(s => s.c);
+        const pairs = [];
+        for (let i=0; i<top.length; i++) {
+          for (let j=i+1; j<top.length; j++) {
+            const s = evaluateTeam([...filled, top[i], top[j]]);
+            pairs.push({c1: top[i], c2: top[j], delta: s - baseScore});
+          }
+        }
+        pairs.sort((a,b) => b.delta - a.delta);
+        setResults({type:'pair', list: pairs.slice(0, 12)});
+      }
+      setComputing(false);
+    }, 10);
+  };
+
+  if (emptyCount === 0 || filled.length === 0) return null;
+
+  return (
+    <div className="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-3 mt-3">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div className="text-sm font-bold text-gray-700">🪄 残り{emptyCount}枠のおすすめ候補</div>
+        <div className="flex gap-1.5 flex-wrap">
+          <button onClick={()=>{setMode('1');setResults(null);}}
+            className={`text-xs px-2 py-1 rounded ${mode==='1'?'bg-blue-600 text-white':'bg-white border text-gray-600'}`}>
+            1枠最適
+          </button>
+          {emptyCount >= 2 && (
+            <button onClick={()=>{setMode('2');setResults(null);}}
+              className={`text-xs px-2 py-1 rounded ${mode==='2'?'bg-blue-600 text-white':'bg-white border text-gray-600'}`}>
+              2枠同時最適
+            </button>
+          )}
+          <button onClick={compute} disabled={computing}
+            className="text-xs px-3 py-1 rounded bg-purple-600 text-white font-bold hover:bg-purple-700 disabled:opacity-50">
+            {computing ? '計算中...' : '計算する'}
+          </button>
+        </div>
+      </div>
+
+      {results?.type === 'single' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {results.list.map((r,i) => (
+            <button key={r.c.id} onClick={()=>onAdd(r.c)}
+              className="border rounded p-2 bg-white hover:bg-blue-50 hover:border-blue-400 text-left flex gap-2 items-start transition">
+              <span className="text-xs font-bold text-gray-400 w-4">{i+1}</span>
+              <img src={pokeImg(r.c)} onError={e=>{e.target.src=pokeImgFallback(r.c)}} className="w-12 h-12 object-contain flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold truncate">{r.c.jp}</div>
+                <div className="flex gap-1 items-center flex-wrap mt-0.5">
+                  {r.c.types.map(t => <TypeBadge key={t} type={t} />)}
+                  <span className="text-[9px] text-gray-500">S{r.c.spd}</span>
+                </div>
+                <div className="text-[10px] text-green-700 font-bold mt-0.5">+{r.delta.toFixed(0)}点</div>
+                {r.reasons.map((rs,ri) => (
+                  <div key={ri} className="text-[10px] text-gray-600 flex gap-0.5 items-center flex-wrap mt-0.5">
+                    <span className="font-bold">{rs.kind}:</span>
+                    {rs.types.map(t => <TypeBadge key={t} type={t} />)}
+                  </div>
+                ))}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {results?.type === 'pair' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {results.list.map((r,i) => (
+            <div key={i} className="border rounded p-2 bg-white">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold text-gray-400">{i+1}位</span>
+                <span className="text-[10px] text-green-700 font-bold">+{r.delta.toFixed(0)}点</span>
+              </div>
+              <div className="flex gap-1">
+                {[r.c1, r.c2].map((c, ci) => (
+                  <button key={ci} onClick={()=>onAdd(c)}
+                    className="flex-1 border rounded p-1.5 hover:bg-blue-50 hover:border-blue-400 text-left transition">
+                    <div className="flex items-center gap-1.5">
+                      <img src={pokeImg(c)} onError={e=>{e.target.src=pokeImgFallback(c)}} className="w-10 h-10 object-contain" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold truncate">{c.jp}</div>
+                        <div className="flex gap-0.5 items-center flex-wrap">
+                          {c.types.map(t => <TypeBadge key={t} type={t} />)}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="text-[10px] text-gray-500 col-span-full">※ 各ポケをクリックで個別追加できます（2体まとめて追加ではありません）</div>
+        </div>
+      )}
+
+      {results && results.list.length === 0 && (
+        <div className="text-xs text-gray-500 text-center py-2">候補なし</div>
+      )}
+      {!results && (
+        <div className="text-[11px] text-gray-600">
+          現在{filled.length}体登録済み。「計算する」で全{ROSTER.length}体から最適候補を探索します。
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ====== 自軍登録 ======
 function TeamSetup({team, setTeam}) {
   const [pickerIdx, setPickerIdx] = useState(null);
@@ -295,6 +471,10 @@ function TeamSetup({team, setTeam}) {
           );
         })}
       </div>
+      <TeamBuilderSuggest team={team} onAdd={p => {
+        const firstEmpty = team.findIndex(s => !s);
+        if (firstEmpty >= 0) setSlot(firstEmpty, {...p, name: p.jp});
+      }} />
       {pickerIdx !== null && (
         <PokemonPicker onSelect={p=>setSlot(pickerIdx, p)} onClose={()=>setPickerIdx(null)} />
       )}
