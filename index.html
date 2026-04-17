@@ -1070,11 +1070,20 @@ function App() {
           setTeams([{name:'チーム1', slots}]);
         }
       }
+      // 前回同期時のサーバー updated_at を復元（競合解決に使用）
+      const savedAt = localStorage.getItem('sync_updated_at_v1');
+      if (savedAt) lastUpdatedAtRef.current = savedAt;
       const savedKey = localStorage.getItem('sync_key_v1');
       if (savedKey) setSyncKey(savedKey);
     } catch(e) {}
     setLoaded(true);
   }, []);
+
+  // サーバー updated_at をlocalStorageに保存するヘルパー
+  const setLastUpdatedAt = (ts) => {
+    lastUpdatedAtRef.current = ts;
+    try { if (ts) localStorage.setItem('sync_updated_at_v1', ts); } catch(e) {}
+  };
 
   // localStorage保存
   useEffect(() => {
@@ -1092,22 +1101,45 @@ function App() {
   }, [syncKey, loaded]);
 
   // 接続確立: pull → apply or push
+  //   mode: 'new'      … 新規キー発行：現ローカルを初回プッシュ
+  //   mode: 'existing' … 既存キーで接続：リモート優先
+  //   mode: 'auto'     … 自動再接続：サーバー updated_at を比較して新しい方を採用
   const doConnect = async (key, mode) => {
     setSyncStatus('connecting');
     setSyncError('');
     try {
       const remote = await syncPull(key);
-      if (remote && mode === 'existing') {
-        // 既存キーで接続: リモート優先で上書き
-        skipNextPushRef.current = true;
-        const d = remote.teams_json || {};
-        if (d.teams?.length) { setTeams(d.teams); setActiveIdx(d.activeIdx ?? 0); }
-        if (d.opponents) setOpponents(d.opponents);
-        lastUpdatedAtRef.current = remote.updated_at;
+      const prevAt = lastUpdatedAtRef.current;
+      if (remote) {
+        if (mode === 'existing') {
+          // 明示的接続：リモート優先で上書き
+          skipNextPushRef.current = true;
+          const d = remote.teams_json || {};
+          if (d.teams?.length) { setTeams(d.teams); setActiveIdx(d.activeIdx ?? 0); }
+          if (d.opponents) setOpponents(d.opponents);
+          setLastUpdatedAt(remote.updated_at);
+        } else if (mode === 'auto') {
+          // 自動再接続：前回の保存時点より新しければリモート採用、そうでなければローカルを push
+          if (!prevAt || remote.updated_at > prevAt) {
+            skipNextPushRef.current = true;
+            const d = remote.teams_json || {};
+            if (d.teams?.length) { setTeams(d.teams); setActiveIdx(d.activeIdx ?? 0); }
+            if (d.opponents) setOpponents(d.opponents);
+            setLastUpdatedAt(remote.updated_at);
+          } else {
+            // ローカルが新しい（オフライン中の編集など）→ push
+            const r = await syncPush(key, { teams, activeIdx, opponents });
+            setLastUpdatedAt(r.updated_at);
+          }
+        } else {
+          // mode === 'new' でリモートが既にある異常系 → 上書きpush
+          const r = await syncPush(key, { teams, activeIdx, opponents });
+          setLastUpdatedAt(r.updated_at);
+        }
       } else {
-        // 新規発行 or 存在しないキー: ローカル状態をプッシュ
+        // リモート未作成 → 必ずローカルをプッシュ
         const r = await syncPush(key, { teams, activeIdx, opponents });
-        lastUpdatedAtRef.current = r.updated_at;
+        setLastUpdatedAt(r.updated_at);
       }
       setSyncKey(key);
       setSyncStatus('connected');
@@ -1124,7 +1156,18 @@ function App() {
     setSyncKey(null);
     setSyncStatus('idle');
     lastUpdatedAtRef.current = null;
+    try { localStorage.removeItem('sync_updated_at_v1'); } catch(e) {}
   };
+
+  // リロード時の自動再接続（保存キーがあれば）
+  const autoReconnectRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || autoReconnectRef.current) return;
+    if (syncKey && syncStatus === 'idle') {
+      autoReconnectRef.current = true;
+      doConnect(syncKey, 'auto').catch(() => {});
+    }
+  }, [loaded, syncKey]);
 
   // 変更検知 → debounce 2s → push
   useEffect(() => {
@@ -1135,7 +1178,7 @@ function App() {
       try {
         setSyncStatus('pushing');
         const r = await syncPush(syncKey, { teams, activeIdx, opponents });
-        lastUpdatedAtRef.current = r.updated_at;
+        setLastUpdatedAt(r.updated_at);
         setSyncStatus('connected');
       } catch (e) {
         setSyncStatus('error');
@@ -1156,7 +1199,7 @@ function App() {
         if (!alive || !remote) return;
         if (remote.updated_at !== lastUpdatedAtRef.current) {
           // リモートが新しい → ローカルに反映
-          lastUpdatedAtRef.current = remote.updated_at;
+          setLastUpdatedAt(remote.updated_at);
           skipNextPushRef.current = true;
           const d = remote.teams_json || {};
           if (d.teams?.length) {
