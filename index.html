@@ -76,14 +76,17 @@ function allWeaknesses(defTypes) {
 
 // 一致技(STAB)考慮の最大攻撃スコア
 function bestHitScore(userPoke, opp) {
-  if (!userPoke || !opp) return {score:0, mult:0, stab:false, mv:null};
-  let best = {score:0, mult:0, stab:false, mv:null};
+  if (!userPoke || !opp) return {score:0, mult:0, stab:false, mv:null, offF:1, itemF:1};
+  let best = {score:0, mult:0, stab:false, mv:null, offF:1, itemF:1};
   for (const mv of (userPoke.moves || [])) {
-    if (!mv.type) continue;
+    if (!mv.type || mv.cat === '変') continue;
     const mult = defensiveMult(mv.type, opp.types);
+    if (mult === 0) continue;
     const stab = userPoke.types.includes(mv.type);
-    const score = mult * (stab ? 1.5 : 1);
-    if (score > best.score) best = {score, mult, stab, mv};
+    const offF = offensiveFactor(userPoke, mv);
+    const itemF = itemFactor(userPoke, mv);
+    const score = mult * (stab ? 1.5 : 1) * offF * itemF;
+    if (score > best.score) best = {score, mult, stab, mv, offF, itemF};
   }
   return best;
 }
@@ -148,8 +151,303 @@ const GW_AID = {'3':'553138','4':'553139','7':'553152','8':'553153','9':'553154'
 // GameWith詳細ページのURL生成（未登録IDはフォールバックとして一覧ページへ）
 const gwDetailUrl = (pokeId) => GW_AID[pokeId] ? `https://gamewith.jp/pokemon-champions/${GW_AID[pokeId]}` : 'https://gamewith.jp/pokemon-champions/546414';
 
+// ====== 物理/特殊型判定 ======
+// 種族値ベース: atk/spa を比較 (1.25倍以上で偏りありと判定)
+function classifyByStats(pokeId) {
+  const s = POKE_STATS[pokeId];
+  if (!s) return null;
+  const [atk, spa] = s;
+  if (atk >= spa * 1.25) return {key:'phys', jp:'物理', emoji:'🥊', cls:'bg-red-100 text-red-700 border-red-300', atk, spa};
+  if (spa >= atk * 1.25) return {key:'spec', jp:'特殊', emoji:'✨', cls:'bg-blue-100 text-blue-700 border-blue-300', atk, spa};
+  return {key:'mixed', jp:'両刀', emoji:'⚔️', cls:'bg-purple-100 text-purple-700 border-purple-300', atk, spa};
+}
+// 技カテゴリベース: 登録技の物/特/変を集計
+function classifyByMoves(moves) {
+  const cats = (moves||[]).map(m => m?.cat).filter(Boolean);
+  const phys = cats.filter(c => c === '物').length;
+  const spec = cats.filter(c => c === '特').length;
+  const stat = cats.filter(c => c === '変').length;
+  const off = phys + spec;
+  if (off === 0) return null;
+  if (phys > 0 && spec === 0) return {key:'phys', jp:'物理型', emoji:'🥊', cls:'bg-red-100 text-red-700 border-red-300', phys, spec, stat};
+  if (spec > 0 && phys === 0) return {key:'spec', jp:'特殊型', emoji:'✨', cls:'bg-blue-100 text-blue-700 border-blue-300', phys, spec, stat};
+  return {key:'mixed', jp:'両刀型', emoji:'⚔️', cls:'bg-purple-100 text-purple-700 border-purple-300', phys, spec, stat};
+}
+// 技分類バッジの色
+const MOVE_CAT_CLS = { '物':'bg-red-500 text-white', '特':'bg-blue-500 text-white', '変':'bg-gray-400 text-white' };
+
+// ====== 持ち物（ポケモンチャンピオンズ実装準拠） ======
+// メガストーンはROSTERで別形態として扱うため省略
+const ITEMS = [
+  { id:'', jp:'なし', emoji:'—', short:'', group:'' },
+
+  // こだわり
+  { id:'choice_scarf',  jp:'こだわりスカーフ', emoji:'💨', short:'スカーフ',  group:'choice', desc:'素早さ×1.5・技ロック' },
+
+  // タイプ強化 ×1.2
+  { id:'silk_scarf',    jp:'シルクのスカーフ', emoji:'🧣', short:'シルク',    group:'type', typeBoost:'normal'   },
+  { id:'charcoal',      jp:'もくたん',         emoji:'🪵', short:'もくたん',  group:'type', typeBoost:'fire'     },
+  { id:'mystic_water',  jp:'しんぴのしずく',   emoji:'💧', short:'しんぴ',    group:'type', typeBoost:'water'    },
+  { id:'miracle_seed',  jp:'きせきのタネ',     emoji:'🌱', short:'タネ',      group:'type', typeBoost:'grass'    },
+  { id:'magnet',        jp:'じしゃく',         emoji:'🧲', short:'じしゃく',  group:'type', typeBoost:'electric' },
+  { id:'never_melt_ice',jp:'とけないこおり',   emoji:'🧊', short:'こおり',    group:'type', typeBoost:'ice'      },
+  { id:'black_belt',    jp:'くろおび',         emoji:'🥋', short:'くろおび',  group:'type', typeBoost:'fighting' },
+  { id:'poison_barb',   jp:'どくバリ',         emoji:'🟣', short:'どくバリ',  group:'type', typeBoost:'poison'   },
+  { id:'soft_sand',     jp:'やわらかいすな',   emoji:'🏜️', short:'すな',     group:'type', typeBoost:'ground'   },
+  { id:'sharp_beak',    jp:'するどいくちばし', emoji:'🪶', short:'くちばし',  group:'type', typeBoost:'flying'   },
+  { id:'twisted_spoon', jp:'まがったスプーン', emoji:'🥄', short:'スプーン',  group:'type', typeBoost:'psychic'  },
+  { id:'silver_powder', jp:'ぎんのこな',       emoji:'✨', short:'ぎんのこな',group:'type', typeBoost:'bug'      },
+  { id:'hard_stone',    jp:'かたいいし',       emoji:'🪨', short:'いし',      group:'type', typeBoost:'rock'     },
+  { id:'spell_tag',     jp:'のろいのおふだ',   emoji:'📜', short:'おふだ',    group:'type', typeBoost:'ghost'    },
+  { id:'dragon_fang',   jp:'りゅうのキバ',     emoji:'🦷', short:'りゅうキバ',group:'type', typeBoost:'dragon'   },
+  { id:'black_glasses', jp:'くろいメガネ',     emoji:'🕶️', short:'メガネ',   group:'type', typeBoost:'dark'     },
+  { id:'metal_coat',    jp:'メタルコート',     emoji:'⚙️', short:'メタル',   group:'type', typeBoost:'steel'    },
+  { id:'fairy_feather', jp:'ようせいのハネ',   emoji:'🧚', short:'ハネ',      group:'type', typeBoost:'fairy'    },
+
+  // 特定ポケモン専用
+  { id:'light_ball',    jp:'でんきだま',       emoji:'⚡', short:'でんきだま',group:'exclusive', desc:'ピカチュウ専用 攻撃・特攻×2' },
+
+  // 回復・持続
+  { id:'leftovers',     jp:'たべのこし',       emoji:'🍖', short:'たべのこし',group:'recovery', desc:'毎ターン最大HP1/16回復' },
+  { id:'shell_bell',    jp:'かいがらのすず',   emoji:'🔔', short:'かいがら',  group:'recovery', desc:'与ダメージの1/8を回復' },
+  { id:'sitrus',        jp:'オボンのみ',       emoji:'🫐', short:'オボン',    group:'recovery', desc:'HP半減時 最大HP1/4回復' },
+  { id:'oran',          jp:'オレンのみ',       emoji:'🍒', short:'オレン',    group:'recovery', desc:'HP半減時 10回復' },
+  { id:'leppa',         jp:'ヒメリのみ',       emoji:'🍏', short:'ヒメリ',    group:'recovery', desc:'PP0の技のPPを10回復' },
+
+  // 行動保険
+  { id:'focus_sash',    jp:'きあいのタスキ',   emoji:'🎗️', short:'タスキ',   group:'guard',    desc:'満タン時ひんし技を1度耐える' },
+  { id:'focus_band',    jp:'きあいのハチマキ', emoji:'🎽', short:'気ハチマキ',group:'guard',    desc:'10%でひんし技に耐える' },
+  { id:'white_herb',    jp:'しろいハーブ',     emoji:'🌿', short:'しろハーブ',group:'guard',    desc:'能力低下を回復(1回)' },
+  { id:'mental_herb',   jp:'メンタルハーブ',   emoji:'🍀', short:'メンタル',  group:'guard',    desc:'メロメロ・ちょうはつ等を解除(1回)' },
+
+  // 補助
+  { id:'kings_rock',    jp:'おうじゃのしるし', emoji:'👑', short:'おうじゃ',  group:'utility', desc:'10%でひるませ' },
+  { id:'quick_claw',    jp:'せんせいのツメ',   emoji:'🗡️', short:'せんせい', group:'utility', desc:'20%で同優先度の先制' },
+  { id:'scope_lens',    jp:'ピントレンズ',     emoji:'🎯', short:'ピント',    group:'utility', desc:'急所ランク+1' },
+  { id:'brightpowder',  jp:'ひかりのこな',     emoji:'💫', short:'ひかり',    group:'utility', desc:'相手の命中率×0.9' },
+
+  // 状態回復きのみ
+  { id:'cheri',  jp:'クラボのみ',  emoji:'🌶️', short:'クラボ',  group:'status', desc:'まひ回復' },
+  { id:'chesto', jp:'カゴのみ',    emoji:'🥥', short:'カゴ',    group:'status', desc:'ねむり回復' },
+  { id:'pecha',  jp:'モモンのみ',  emoji:'🍑', short:'モモン',  group:'status', desc:'どく回復' },
+  { id:'rawst',  jp:'チーゴのみ',  emoji:'🟦', short:'チーゴ',  group:'status', desc:'やけど回復' },
+  { id:'aspear', jp:'ナナシのみ',  emoji:'🍐', short:'ナナシ',  group:'status', desc:'こおり回復' },
+  { id:'persim', jp:'キーのみ',    emoji:'🍈', short:'キー',    group:'status', desc:'こんらん回復' },
+  { id:'lum',    jp:'ラムのみ',    emoji:'🍇', short:'ラム',    group:'status', desc:'全状態異常+こんらん回復' },
+
+  // 弱点半減きのみ（効果抜群を受けた時にそのタイプのみ半減）
+  { id:'occa',   jp:'オッカのみ',  emoji:'🔥', short:'オッカ', group:'berry_resist', resist:'fire'     },
+  { id:'itoke',  jp:'イトケのみ',  emoji:'💧', short:'イトケ', group:'berry_resist', resist:'water'    },
+  { id:'sokuno', jp:'ソクノのみ',  emoji:'⚡', short:'ソクノ', group:'berry_resist', resist:'electric' },
+  { id:'rindo',  jp:'リンドのみ',  emoji:'🌱', short:'リンド', group:'berry_resist', resist:'grass'    },
+  { id:'yache',  jp:'ヤチェのみ',  emoji:'🧊', short:'ヤチェ', group:'berry_resist', resist:'ice'      },
+  { id:'yopu',   jp:'ヨプのみ',    emoji:'🥋', short:'ヨプ',   group:'berry_resist', resist:'fighting' },
+  { id:'bia',    jp:'ビアーのみ',  emoji:'🟣', short:'ビアー', group:'berry_resist', resist:'poison'   },
+  { id:'shuka',  jp:'シュカのみ',  emoji:'🏜️', short:'シュカ',group:'berry_resist', resist:'ground'   },
+  { id:'bakou',  jp:'バコウのみ',  emoji:'🪶', short:'バコウ', group:'berry_resist', resist:'flying'   },
+  { id:'utan',   jp:'ウタンのみ',  emoji:'🥄', short:'ウタン', group:'berry_resist', resist:'psychic'  },
+  { id:'tanga',  jp:'タンガのみ',  emoji:'🦋', short:'タンガ', group:'berry_resist', resist:'bug'      },
+  { id:'yorogi', jp:'ヨロギのみ',  emoji:'🪨', short:'ヨロギ', group:'berry_resist', resist:'rock'     },
+  { id:'kasib',  jp:'カシブのみ',  emoji:'👻', short:'カシブ', group:'berry_resist', resist:'ghost'    },
+  { id:'haban',  jp:'ハバンのみ',  emoji:'🐲', short:'ハバン', group:'berry_resist', resist:'dragon'   },
+  { id:'namo',   jp:'ナモのみ',    emoji:'🌑', short:'ナモ',   group:'berry_resist', resist:'dark'     },
+  { id:'ririba', jp:'リリバのみ',  emoji:'⚙️', short:'リリバ',group:'berry_resist', resist:'steel'    },
+  { id:'rozel',  jp:'ロゼルのみ',  emoji:'🧚', short:'ロゼル', group:'berry_resist', resist:'fairy'    },
+  { id:'hoz',    jp:'ホズのみ',    emoji:'🌰', short:'ホズ',   group:'berry_resist', resist:'normal'   },
+];
+const ITEM_MAP = Object.fromEntries(ITEMS.map(it => [it.id, it]));
+
+// 持ち物のセレクタ用グループ定義
+const ITEM_GROUPS = [
+  { key:'choice',       label:'◆ こだわり' },
+  { key:'type',         label:'◆ タイプ強化 ×1.2' },
+  { key:'exclusive',    label:'◆ 専用アイテム' },
+  { key:'recovery',     label:'◆ 回復・持続' },
+  { key:'guard',        label:'◆ 行動保険' },
+  { key:'utility',      label:'◆ 補助・試行回数' },
+  { key:'status',       label:'◆ 状態回復きのみ' },
+  { key:'berry_resist', label:'◆ 弱点半減きのみ' },
+];
+
+// 攻撃側ステータス補正（技の分類に応じて A/C を参照、不一致は減点）
+function offensiveFactor(poke, mv) {
+  if (!poke || !mv || !mv.cat || mv.cat === '変') return 1;
+  const s = POKE_STATS[poke.id];
+  if (!s) return 1;
+  const [atk, spa] = s;
+  const useStat = mv.cat === '物' ? atk : spa;
+  const altStat = mv.cat === '物' ? spa : atk;
+  let f = Math.max(0.5, Math.min(1.7, useStat / 100));
+  // 不一致型（物理技なのに特殊型、など）は大幅減点
+  if (useStat < altStat * 0.8) f *= 0.7;
+  return f;
+}
+
+// 持ち物による攻撃側ダメージ補正（ポケチャン準拠）
+// - でんきだま: ピカチュウ(id='33')限定で A/C ×2
+// - タイプ強化アイテム18種: 該当タイプ技 ×1.2
+// - その他（きのみ/こだわりスカーフ/補助系）: スコア補正なし（別途表示）
+function itemFactor(poke, mv) {
+  if (!poke?.item || !mv) return 1;
+  const it = ITEM_MAP[poke.item];
+  if (!it) return 1;
+  if (poke.item === 'light_ball' && poke.id === '33' && (mv.cat === '物' || mv.cat === '特')) return 2.0;
+  if (it.typeBoost && mv.type === it.typeBoost) return 1.2;
+  return 1;
+}
+
+// 実効素早さ（こだわりスカーフ 1.5倍）
+function effectiveSpeed(poke) {
+  const base = poke?.spd || 0;
+  if (poke?.item === 'choice_scarf') return Math.floor(base * 1.5);
+  return base;
+}
+
+function ItemBadge({itemId, compact}) {
+  const it = ITEM_MAP[itemId];
+  if (!it || !it.id) return null;
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-800 border-amber-300"
+      title={it.desc ? `${it.jp}：${it.desc}` : it.jp}>
+      <span>{it.emoji}</span>{!compact && <span>{it.short}</span>}
+    </span>
+  );
+}
+
+function BiasBadge({bias, compact}) {
+  if (!bias) return null;
+  const detail = bias.atk !== undefined
+    ? ` A${bias.atk}/C${bias.spa}`
+    : (bias.phys !== undefined ? ` 物${bias.phys}特${bias.spec}${bias.stat?`変${bias.stat}`:''}` : '');
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded border ${bias.cls}`}
+      title={`${bias.jp}${detail}`}>
+      <span>{bias.emoji}</span><span>{bias.jp}</span>
+      {!compact && detail && <span className="opacity-70 font-normal">{detail}</span>}
+    </span>
+  );
+}
+
 // ====== Pokémon Champions 参戦ロスター（218件・フォーム含む） ======
 const ROSTER=[{"id":"3","dex":3,"jp":"フシギバナ","types":["grass","poison"],"img":"003.png","spd":80},{"id":"4","dex":3,"jp":"メガフシギバナ","types":["grass","poison"],"img":"003_1.png","spd":80},{"id":"7","dex":6,"jp":"リザードン","types":["fire","flying"],"img":"006.png","spd":100},{"id":"8","dex":6,"jp":"メガリザードンX","types":["fire","dragon"],"img":"006_1.png","spd":100},{"id":"9","dex":6,"jp":"メガリザードンY","types":["fire","flying"],"img":"006_2.png","spd":100},{"id":"12","dex":9,"jp":"カメックス","types":["water"],"img":"009.png","spd":78},{"id":"13","dex":9,"jp":"メガカメックス","types":["water"],"img":"009_1.png","spd":78},{"id":"19","dex":15,"jp":"スピアー","types":["bug","poison"],"img":"015.png","spd":75},{"id":"20","dex":15,"jp":"メガスピアー","types":["bug","poison"],"img":"015_1.png","spd":145},{"id":"23","dex":18,"jp":"ピジョット","types":["normal","flying"],"img":"018.png","spd":101},{"id":"24","dex":18,"jp":"メガピジョット","types":["normal","flying"],"img":"018_1.png","spd":121},{"id":"32","dex":24,"jp":"アーボック","types":["poison"],"img":"024.png","spd":80},{"id":"33","dex":25,"jp":"ピカチュウ","types":["electric"],"img":"025.png","spd":90},{"id":"34","dex":26,"jp":"ライチュウ","types":["electric"],"img":"026.png","spd":110},{"id":"35","dex":26,"jp":"アローラライチュウ","types":["electric","psychic"],"img":"026_1.png","spd":110},{"id":"49","dex":36,"jp":"ピクシー","types":["fairy"],"img":"036.png","spd":60},{"id":"50","dex":36,"jp":"メガピクシー","types":["fairy","flying"],"img":"036_1.png","spd":70},{"id":"53","dex":38,"jp":"キュウコン","types":["fire"],"img":"038.png","spd":100},{"id":"54","dex":38,"jp":"アローラキュウコン","types":["ice","fairy"],"img":"038_1.png","spd":109},{"id":"81","dex":59,"jp":"ウインディ","types":["fire"],"img":"059.png","spd":95},{"id":"82","dex":59,"jp":"ヒスイウインディ","types":["fire","rock"],"img":"059_1.png","spd":90},{"id":"88","dex":65,"jp":"フーディン","types":["psychic"],"img":"065.png","spd":120},{"id":"89","dex":65,"jp":"メガフーディン","types":["psychic"],"img":"065_1.png","spd":150},{"id":"92","dex":68,"jp":"カイリキー","types":["fighting"],"img":"068.png","spd":55},{"id":"95","dex":71,"jp":"ウツボット","types":["grass","poison"],"img":"071.png","spd":70},{"id":"96","dex":71,"jp":"メガウツボット","types":["grass","poison"],"img":"071_1.png","spd":70},{"id":"111","dex":80,"jp":"ヤドラン","types":["water","psychic"],"img":"080.png","spd":30},{"id":"112","dex":80,"jp":"メガヤドラン","types":["water","psychic"],"img":"080_1.png","spd":30},{"id":"113","dex":80,"jp":"ガラルヤドラン","types":["poison","psychic"],"img":"080_2.png","spd":30},{"id":"130","dex":94,"jp":"ゲンガー","types":["ghost","poison"],"img":"094.png","spd":110},{"id":"131","dex":94,"jp":"メガゲンガー","types":["ghost","poison"],"img":"094_1.png","spd":130},{"id":"157","dex":115,"jp":"ガルーラ","types":["normal"],"img":"115.png","spd":90},{"id":"158","dex":115,"jp":"メガガルーラ","types":["normal"],"img":"115_1.png","spd":100},{"id":"164","dex":121,"jp":"スターミー","types":["water","psychic"],"img":"121.png","spd":115},{"id":"165","dex":121,"jp":"メガスターミー","types":["water","psychic"],"img":"121_1.png","spd":120},{"id":"172","dex":127,"jp":"カイロス","types":["bug"],"img":"127.png","spd":85},{"id":"173","dex":127,"jp":"メガカイロス","types":["bug","flying"],"img":"127_1.png","spd":105},{"id":"174","dex":128,"jp":"ケンタロス","types":["normal"],"img":"128.png","spd":110},{"id":"1184","dex":128,"jp":"パルデアケンタロス(かくとう)","types":["fighting"],"img":"128_1.png","spd":100},{"id":"1185","dex":128,"jp":"パルデアケンタロス(みず)","types":["fighting","water"],"img":"128_2.png","spd":100},{"id":"1186","dex":128,"jp":"パルデアケンタロス(ほのお)","types":["fighting","fire"],"img":"128_3.png","spd":100},{"id":"176","dex":130,"jp":"ギャラドス","types":["water","flying"],"img":"130.png","spd":81},{"id":"177","dex":130,"jp":"メガギャラドス","types":["water","dark"],"img":"130_1.png","spd":81},{"id":"179","dex":132,"jp":"メタモン","types":["normal"],"img":"132.png","spd":48},{"id":"181","dex":134,"jp":"シャワーズ","types":["water"],"img":"134.png","spd":65},{"id":"182","dex":135,"jp":"サンダース","types":["electric"],"img":"135.png","spd":130},{"id":"183","dex":136,"jp":"ブースター","types":["fire"],"img":"136.png","spd":65},{"id":"189","dex":142,"jp":"プテラ","types":["rock","flying"],"img":"142.png","spd":130},{"id":"190","dex":142,"jp":"メガプテラ","types":["rock","flying"],"img":"142_1.png","spd":150},{"id":"191","dex":143,"jp":"カビゴン","types":["normal"],"img":"143.png","spd":30},{"id":"200","dex":149,"jp":"カイリュー","types":["dragon","flying"],"img":"149.png","spd":80},{"id":"201","dex":149,"jp":"メガカイリュー","types":["dragon","flying"],"img":"149_1.png","spd":100},{"id":"208","dex":154,"jp":"メガニウム","types":["grass"],"img":"154.png","spd":80},{"id":"209","dex":154,"jp":"メガメガニウム","types":["grass","fairy"],"img":"154_1.png","spd":80},{"id":"212","dex":157,"jp":"バクフーン","types":["fire"],"img":"157.png","spd":100},{"id":"213","dex":157,"jp":"ヒスイバクフーン","types":["fire","ghost"],"img":"157_1.png","spd":95},{"id":"216","dex":160,"jp":"オーダイル","types":["water"],"img":"160.png","spd":78},{"id":"217","dex":160,"jp":"メガオーダイル","types":["water","dragon"],"img":"160_1.png","spd":78},{"id":"225","dex":168,"jp":"アリアドス","types":["bug","poison"],"img":"168.png","spd":40},{"id":"238","dex":181,"jp":"デンリュウ","types":["electric"],"img":"181.png","spd":55},{"id":"239","dex":181,"jp":"メガデンリュウ","types":["electric","dragon"],"img":"181_1.png","spd":45},{"id":"242","dex":184,"jp":"マリルリ","types":["water","fairy"],"img":"184.png","spd":50},{"id":"244","dex":186,"jp":"ニョロトノ","types":["water"],"img":"186.png","spd":70},{"id":"254","dex":196,"jp":"エーフィ","types":["psychic"],"img":"196.png","spd":110},{"id":"255","dex":197,"jp":"ブラッキー","types":["dark"],"img":"197.png","spd":65},{"id":"257","dex":199,"jp":"ヤドキング","types":["water","psychic"],"img":"199.png","spd":30},{"id":"258","dex":199,"jp":"ガラルヤドキング","types":["poison","psychic"],"img":"199_1.png","spd":30},{"id":"264","dex":205,"jp":"フォレトス","types":["bug","steel"],"img":"205.png","spd":40},{"id":"267","dex":208,"jp":"ハガネール","types":["steel","ground"],"img":"208.png","spd":30},{"id":"268","dex":208,"jp":"メガハガネール","types":["steel","ground"],"img":"208_1.png","spd":30},{"id":"273","dex":212,"jp":"ハッサム","types":["bug","steel"],"img":"212.png","spd":65},{"id":"274","dex":212,"jp":"メガハッサム","types":["bug","steel"],"img":"212_1.png","spd":75},{"id":"276","dex":214,"jp":"ヘラクロス","types":["bug","fighting"],"img":"214.png","spd":85},{"id":"277","dex":214,"jp":"メガヘラクロス","types":["bug","fighting"],"img":"214_1.png","spd":75},{"id":"292","dex":227,"jp":"エアームド","types":["steel","flying"],"img":"227.png","spd":70},{"id":"293","dex":227,"jp":"メガエアームド","types":["steel","flying"],"img":"227_1.png","spd":110},{"id":"295","dex":229,"jp":"ヘルガー","types":["dark","fire"],"img":"229.png","spd":95},{"id":"296","dex":229,"jp":"メガヘルガー","types":["dark","fire"],"img":"229_1.png","spd":115},{"id":"315","dex":248,"jp":"バンギラス","types":["rock","dark"],"img":"248.png","spd":61},{"id":"316","dex":248,"jp":"メガバンギラス","types":["rock","dark"],"img":"248_1.png","spd":71},{"id":"352","dex":279,"jp":"ペリッパー","types":["water","flying"],"img":"279.png","spd":65},{"id":"355","dex":282,"jp":"サーナイト","types":["psychic","fairy"],"img":"282.png","spd":80},{"id":"356","dex":282,"jp":"メガサーナイト","types":["psychic","fairy"],"img":"282_1.png","spd":100},{"id":"376","dex":302,"jp":"ヤミラミ","types":["dark","ghost"],"img":"302.png","spd":50},{"id":"377","dex":302,"jp":"メガヤミラミ","types":["dark","ghost"],"img":"302_1.png","spd":20},{"id":"382","dex":306,"jp":"ボスゴドラ","types":["steel","rock"],"img":"306.png","spd":50},{"id":"383","dex":306,"jp":"メガボスゴドラ","types":["steel"],"img":"306_1.png","spd":50},{"id":"385","dex":308,"jp":"チャーレム","types":["fighting","psychic"],"img":"308.png","spd":80},{"id":"386","dex":308,"jp":"メガチャーレム","types":["fighting","psychic"],"img":"308_1.png","spd":100},{"id":"388","dex":310,"jp":"ライボルト","types":["electric"],"img":"310.png","spd":105},{"id":"389","dex":310,"jp":"メガライボルト","types":["electric"],"img":"310_1.png","spd":135},{"id":"398","dex":319,"jp":"サメハダー","types":["water","dark"],"img":"319.png","spd":95},{"id":"399","dex":319,"jp":"メガサメハダー","types":["water","dark"],"img":"319_1.png","spd":105},{"id":"403","dex":323,"jp":"バクーダ","types":["fire","ground"],"img":"323.png","spd":40},{"id":"404","dex":323,"jp":"メガバクーダ","types":["fire","ground"],"img":"323_1.png","spd":20},{"id":"405","dex":324,"jp":"コータス","types":["fire"],"img":"324.png","spd":20},{"id":"415","dex":334,"jp":"チルタリス","types":["dragon","flying"],"img":"334.png","spd":80},{"id":"416","dex":334,"jp":"メガチルタリス","types":["dragon","fairy"],"img":"334_1.png","spd":80},{"id":"432","dex":350,"jp":"ミロカロス","types":["water"],"img":"350.png","spd":81},{"id":"433","dex":351,"jp":"ポワルン","types":["normal"],"img":"351.png","spd":70},{"id":"434","dex":351,"jp":"ポワルン(たいようのすがた)","types":["fire"],"img":"351_1.png","spd":70},{"id":"435","dex":351,"jp":"ポワルン(あまみずのすがた)","types":["water"],"img":"351_2.png","spd":70},{"id":"436","dex":351,"jp":"ポワルン(ゆきぐものすがた)","types":["ice"],"img":"351_3.png","spd":70},{"id":"439","dex":354,"jp":"ジュペッタ","types":["ghost"],"img":"354.png","spd":65},{"id":"440","dex":354,"jp":"メガジュペッタ","types":["ghost"],"img":"354_1.png","spd":75},{"id":"444","dex":358,"jp":"チリーン","types":["psychic"],"img":"358.png","spd":65},{"id":"445","dex":358,"jp":"メガチリーン","types":["psychic","steel"],"img":"358_1.png","spd":65},{"id":"446","dex":359,"jp":"アブソル","types":["dark"],"img":"359.png","spd":75},{"id":"447","dex":359,"jp":"メガアブソル","types":["dark"],"img":"359_1.png","spd":115},{"id":"451","dex":362,"jp":"オニゴーリ","types":["ice"],"img":"362.png","spd":80},{"id":"452","dex":362,"jp":"メガオニゴーリ","types":["ice"],"img":"362_1.png","spd":100},{"id":"489","dex":389,"jp":"ドダイトス","types":["grass","ground"],"img":"389.png","spd":56},{"id":"492","dex":392,"jp":"ゴウカザル","types":["fire","fighting"],"img":"392.png","spd":108},{"id":"495","dex":395,"jp":"エンペルト","types":["water","steel"],"img":"395.png","spd":60},{"id":"506","dex":405,"jp":"レントラー","types":["electric"],"img":"405.png","spd":70},{"id":"508","dex":407,"jp":"ロズレイド","types":["grass","poison"],"img":"407.png","spd":90},{"id":"510","dex":409,"jp":"ラムパルド","types":["rock"],"img":"409.png","spd":58},{"id":"512","dex":411,"jp":"トリデプス","types":["rock","steel"],"img":"411.png","spd":30},{"id":"536","dex":428,"jp":"ミミロップ","types":["normal"],"img":"428.png","spd":105},{"id":"537","dex":428,"jp":"メガミミロップ","types":["normal","fighting"],"img":"428_1.png","spd":135},{"id":"551","dex":442,"jp":"ミカルゲ","types":["ghost","dark"],"img":"442.png","spd":35},{"id":"554","dex":445,"jp":"ガブリアス","types":["dragon","ground"],"img":"445.png","spd":102},{"id":"555","dex":445,"jp":"メガガブリアス","types":["dragon","ground"],"img":"445_1.png","spd":92},{"id":"559","dex":448,"jp":"ルカリオ","types":["fighting","steel"],"img":"448.png","spd":90},{"id":"560","dex":448,"jp":"メガルカリオ","types":["fighting","steel"],"img":"448_1.png","spd":112},{"id":"563","dex":450,"jp":"カバルドン","types":["ground"],"img":"450.png","spd":47},{"id":"568","dex":454,"jp":"ドクロッグ","types":["poison","fighting"],"img":"454.png","spd":85},{"id":"574","dex":460,"jp":"ユキノオー","types":["grass","ice"],"img":"460.png","spd":60},{"id":"575","dex":460,"jp":"メガユキノオー","types":["grass","ice"],"img":"460_1.png","spd":30},{"id":"576","dex":461,"jp":"マニューラ","types":["dark","ice"],"img":"461.png","spd":125},{"id":"579","dex":464,"jp":"ドサイドン","types":["ground","rock"],"img":"464.png","spd":40},{"id":"585","dex":470,"jp":"リーフィア","types":["grass"],"img":"470.png","spd":95},{"id":"586","dex":471,"jp":"グレイシア","types":["ice"],"img":"471.png","spd":65},{"id":"587","dex":472,"jp":"グライオン","types":["ground","flying"],"img":"472.png","spd":95},{"id":"588","dex":473,"jp":"マンムー","types":["ice","ground"],"img":"473.png","spd":80},{"id":"590","dex":475,"jp":"エルレイド","types":["psychic","fighting"],"img":"475.png","spd":80},{"id":"591","dex":475,"jp":"メガエルレイド","types":["psychic","fighting"],"img":"475_1.png","spd":110},{"id":"594","dex":478,"jp":"ユキメノコ","types":["ice","ghost"],"img":"478.png","spd":110},{"id":"595","dex":478,"jp":"メガユキメノコ","types":["ice","ghost"],"img":"478_1.png","spd":120},{"id":"596","dex":479,"jp":"ロトム","types":["electric","ghost"],"img":"479.png","spd":91},{"id":"597","dex":479,"jp":"ヒートロトム","types":["electric","fire"],"img":"479_1.png","spd":86},{"id":"598","dex":479,"jp":"ウォッシュロトム","types":["electric","water"],"img":"479_2.png","spd":86},{"id":"599","dex":479,"jp":"フロストロトム","types":["electric","ice"],"img":"479_3.png","spd":86},{"id":"600","dex":479,"jp":"スピンロトム","types":["electric","flying"],"img":"479_4.png","spd":86},{"id":"601","dex":479,"jp":"カットロトム","types":["electric","grass"],"img":"479_5.png","spd":86},{"id":"625","dex":497,"jp":"ジャローダ","types":["grass"],"img":"497.png","spd":113},{"id":"628","dex":500,"jp":"エンブオー","types":["fire","fighting"],"img":"500.png","spd":65},{"id":"629","dex":500,"jp":"メガエンブオー","types":["fire","fighting"],"img":"500_1.png","spd":75},{"id":"632","dex":503,"jp":"ダイケンキ","types":["water"],"img":"503.png","spd":70},{"id":"633","dex":503,"jp":"ヒスイダイケンキ","types":["water","dark"],"img":"503_1.png","spd":85},{"id":"635","dex":505,"jp":"ミルホッグ","types":["normal"],"img":"505.png","spd":77},{"id":"640","dex":510,"jp":"レパルダス","types":["dark"],"img":"510.png","spd":106},{"id":"642","dex":512,"jp":"ヤナッキー","types":["grass"],"img":"512.png","spd":101},{"id":"644","dex":514,"jp":"バオッキー","types":["fire"],"img":"514.png","spd":101},{"id":"646","dex":516,"jp":"ヒヤッキー","types":["water"],"img":"516.png","spd":101},{"id":"661","dex":530,"jp":"ドリュウズ","types":["ground","steel"],"img":"530.png","spd":88},{"id":"662","dex":530,"jp":"メガドリュウズ","types":["ground","steel"],"img":"530_1.png","spd":103},{"id":"663","dex":531,"jp":"タブンネ","types":["normal"],"img":"531.png","spd":50},{"id":"664","dex":531,"jp":"メガタブンネ","types":["normal","fairy"],"img":"531_1.png","spd":50},{"id":"667","dex":534,"jp":"ローブシン","types":["fighting"],"img":"534.png","spd":45},{"id":"681","dex":547,"jp":"エルフーン","types":["grass","fairy"],"img":"547.png","spd":116},{"id":"690","dex":553,"jp":"ワルビアル","types":["ground","dark"],"img":"553.png","spd":92},{"id":"706","dex":563,"jp":"デスカーン","types":["ghost"],"img":"563.png","spd":30},{"id":"712","dex":569,"jp":"ダストダス","types":["poison"],"img":"569.png","spd":75},{"id":"715","dex":571,"jp":"ゾロアーク","types":["dark"],"img":"571.png","spd":105},{"id":"716","dex":571,"jp":"ヒスイゾロアーク","types":["normal","ghost"],"img":"571_1.png","spd":110},{"id":"724","dex":579,"jp":"ランクルス","types":["psychic"],"img":"579.png","spd":30},{"id":"729","dex":584,"jp":"バイバニラ","types":["ice"],"img":"584.png","spd":79},{"id":"738","dex":587,"jp":"エモンガ","types":["electric","flying"],"img":"587.png","spd":103},{"id":"763","dex":609,"jp":"シャンデラ","types":["ghost","fire"],"img":"609.png","spd":80},{"id":"764","dex":609,"jp":"メガシャンデラ","types":["ghost","fire"],"img":"609_1.png","spd":90},{"id":"769","dex":614,"jp":"ツンベアー","types":["ice"],"img":"614.png","spd":50},{"id":"773","dex":618,"jp":"マッギョ","types":["ground","electric"],"img":"618.png","spd":32},{"id":"774","dex":618,"jp":"ガラルマッギョ","types":["ground","steel"],"img":"618_1.png","spd":32},{"id":"779","dex":623,"jp":"ゴルーグ","types":["ground","ghost"],"img":"623.png","spd":55},{"id":"780","dex":623,"jp":"メガゴルーグ","types":["ground","ghost"],"img":"623_1.png","spd":55},{"id":"793","dex":635,"jp":"サザンドラ","types":["dark","dragon"],"img":"635.png","spd":98},{"id":"795","dex":637,"jp":"ウルガモス","types":["bug","fire"],"img":"637.png","spd":100},{"id":"817","dex":652,"jp":"ブリガロン","types":["grass","fighting"],"img":"652.png","spd":64},{"id":"818","dex":652,"jp":"メガブリガロン","types":["grass","fighting"],"img":"652_1.png","spd":44},{"id":"821","dex":655,"jp":"マフォクシー","types":["fire","psychic"],"img":"655.png","spd":104},{"id":"822","dex":655,"jp":"メガマフォクシー","types":["fire","psychic"],"img":"655_1.png","spd":134},{"id":"825","dex":658,"jp":"ゲッコウガ","types":["water","dark"],"img":"658.png","spd":122},{"id":"826","dex":658,"jp":"メガゲッコウガ","types":["water","dark"],"img":"658_1.png","spd":142},{"id":"828","dex":660,"jp":"ホルード","types":["normal","ground"],"img":"660.png","spd":78},{"id":"831","dex":663,"jp":"ファイアロー","types":["fire","flying"],"img":"663.png","spd":126},{"id":"834","dex":666,"jp":"ビビヨン","types":["bug","flying"],"img":"666.png","spd":89},{"id":"842","dex":670,"jp":"フラエッテ(えいえんのはな)","types":["fairy"],"img":"670_2.png","spd":92},{"id":"843","dex":670,"jp":"メガフラエッテ(えいえんのはな)","types":["fairy"],"img":"670_1.png","spd":102},{"id":"844","dex":671,"jp":"フラージェス","types":["fairy"],"img":"671.png","spd":75},{"id":"848","dex":675,"jp":"ゴロンダ","types":["fighting","dark"],"img":"675.png","spd":58},{"id":"849","dex":676,"jp":"トリミアン","types":["normal"],"img":"676.png","spd":102},{"id":"851","dex":678,"jp":"ニャオニクス(オス)","types":["psychic"],"img":"678.png","spd":104},{"id":"852","dex":678,"jp":"ニャオニクス(メス)","types":["psychic"],"img":"678_1.png","spd":104},{"id":"853","dex":678,"jp":"メガニャオニクス(オス)","types":["psychic"],"img":"678_3.png","spd":124},{"id":"854","dex":678,"jp":"メガニャオニクス(メス)","types":["psychic"],"img":"678_4.png","spd":124},{"id":"857","dex":681,"jp":"ギルガルド(シールドフォルム)","types":["steel","ghost"],"img":"681.png","spd":60},{"id":"858","dex":681,"jp":"ギルガルド(ブレードフォルム)","types":["steel","ghost"],"img":"681_1.png","spd":60},{"id":"860","dex":683,"jp":"フレフワン","types":["fairy"],"img":"683.png","spd":29},{"id":"862","dex":685,"jp":"ペロリーム","types":["fairy"],"img":"685.png","spd":72},{"id":"873","dex":693,"jp":"ブロスター","types":["water"],"img":"693.png","spd":59},{"id":"875","dex":695,"jp":"エレザード","types":["electric","normal"],"img":"695.png","spd":109},{"id":"877","dex":697,"jp":"ガチゴラス","types":["rock","dragon"],"img":"697.png","spd":71},{"id":"879","dex":699,"jp":"アマルルガ","types":["rock","ice"],"img":"699.png","spd":58},{"id":"880","dex":700,"jp":"ニンフィア","types":["fairy"],"img":"700.png","spd":60},{"id":"881","dex":701,"jp":"ルチャブル","types":["fighting","flying"],"img":"701.png","spd":118},{"id":"882","dex":701,"jp":"メガルチャブル","types":["fighting","flying"],"img":"701_1.png","spd":118},{"id":"883","dex":702,"jp":"デデンネ","types":["electric","fairy"],"img":"702.png","spd":101},{"id":"888","dex":706,"jp":"ヌメルゴン","types":["dragon"],"img":"706.png","spd":80},{"id":"889","dex":706,"jp":"ヒスイヌメルゴン","types":["steel","dragon"],"img":"706_1.png","spd":60},{"id":"890","dex":707,"jp":"クレッフィ","types":["steel","fairy"],"img":"707.png","spd":75},{"id":"892","dex":709,"jp":"オーロット","types":["ghost","grass"],"img":"709.png","spd":56},{"id":"897","dex":711,"jp":"パンプジン(こだましゅ)","types":["ghost","grass"],"img":"711.png","spd":99},{"id":"898","dex":711,"jp":"パンプジン(ちゅうだましゅ)","types":["ghost","grass"],"img":"711_1.png","spd":84},{"id":"899","dex":711,"jp":"パンプジン(おおだましゅ)","types":["ghost","grass"],"img":"711_2.png","spd":69},{"id":"900","dex":711,"jp":"パンプジン(ギガだましゅ)","types":["ghost","grass"],"img":"711_3.png","spd":54},{"id":"902","dex":713,"jp":"クレベース","types":["ice"],"img":"713.png","spd":28},{"id":"903","dex":713,"jp":"ヒスイクレベース","types":["ice","rock"],"img":"713_1.png","spd":38},{"id":"905","dex":715,"jp":"オンバーン","types":["flying","dragon"],"img":"715.png","spd":123},{"id":"919","dex":724,"jp":"ジュナイパー","types":["grass","ghost"],"img":"724.png","spd":70},{"id":"920","dex":724,"jp":"ヒスイジュナイパー","types":["grass","fighting"],"img":"724_1.png","spd":60},{"id":"923","dex":727,"jp":"ガオガエン","types":["fire","dark"],"img":"727.png","spd":60},{"id":"926","dex":730,"jp":"アシレーヌ","types":["water","fairy"],"img":"730.png","spd":60},{"id":"929","dex":733,"jp":"ドデカバシ","types":["normal","flying"],"img":"733.png","spd":60},{"id":"936","dex":740,"jp":"ケケンカニ","types":["fighting","ice"],"img":"740.png","spd":43},{"id":"937","dex":740,"jp":"メガケケンカニ","types":["fighting","ice"],"img":"740_1.png","spd":33},{"id":"946","dex":745,"jp":"ルガルガン(まひる)","types":["rock"],"img":"745.png","spd":112},{"id":"947","dex":745,"jp":"ルガルガン(まよなか)","types":["rock"],"img":"745_1.png","spd":82},{"id":"948","dex":745,"jp":"ルガルガン(たそがれ)","types":["rock"],"img":"745_2.png","spd":110},{"id":"952","dex":748,"jp":"ドヒドイデ","types":["poison","water"],"img":"748.png","spd":35},{"id":"954","dex":750,"jp":"バンバドロ","types":["ground"],"img":"750.png","spd":35},{"id":"956","dex":752,"jp":"オニシズクモ","types":["water","bug"],"img":"752.png","spd":42},{"id":"962","dex":758,"jp":"エンニュート","types":["poison","fire"],"img":"758.png","spd":117},{"id":"967","dex":763,"jp":"アマージョ","types":["grass"],"img":"763.png","spd":72},{"id":"969","dex":765,"jp":"ヤレユータン","types":["normal","psychic"],"img":"765.png","spd":60},{"id":"970","dex":766,"jp":"ナゲツケサル","types":["fighting"],"img":"766.png","spd":80},{"id":"984","dex":778,"jp":"ミミッキュ","types":["ghost","fairy"],"img":"778.png","spd":96},{"id":"986","dex":780,"jp":"ジジーロン","types":["normal","dragon"],"img":"780.png","spd":36},{"id":"987","dex":780,"jp":"メガジジーロン","types":["normal","dragon"],"img":"780_1.png","spd":36},{"id":"991","dex":784,"jp":"ジャラランガ","types":["dragon","fighting"],"img":"784.png","spd":85},{"id":"1037","dex":823,"jp":"アーマーガア","types":["flying","steel"],"img":"823.png","spd":67},{"id":"1055","dex":841,"jp":"アップリュー","types":["grass","dragon"],"img":"841.png","spd":70},{"id":"1056","dex":842,"jp":"タルップル","types":["grass","dragon"],"img":"842.png","spd":30},{"id":"1058","dex":844,"jp":"サダイジャ","types":["ground"],"img":"844.png","spd":71},{"id":"1071","dex":855,"jp":"ポットデス","types":["ghost"],"img":"855.png","spd":70},{"id":"1075","dex":858,"jp":"ブリムオン","types":["psychic","fairy"],"img":"858.png","spd":29},{"id":"1083","dex":866,"jp":"バリコオル","types":["ice","psychic"],"img":"866.png","spd":70},{"id":"1084","dex":867,"jp":"デスバーン","types":["ground","ghost"],"img":"867.png","spd":30},{"id":"1086","dex":869,"jp":"マホイップ","types":["fairy"],"img":"869.png","spd":64},{"id":"1097","dex":877,"jp":"モルペコ","types":["electric","dark"],"img":"877.png","spd":97},{"id":"1108","dex":887,"jp":"ドラパルト","types":["dragon","ghost"],"img":"887.png","spd":142},{"id":"1126","dex":899,"jp":"アヤシシ","types":["normal","psychic"],"img":"899.png","spd":65},{"id":"1127","dex":900,"jp":"バサギリ","types":["bug","rock"],"img":"900.png","spd":85},{"id":"1129","dex":902,"jp":"イダイトウ(オス)","types":["water","ghost"],"img":"902.png","spd":78},{"id":"1130","dex":902,"jp":"イダイトウ(メス)","types":["water","ghost"],"img":"902_1.png","spd":78},{"id":"1131","dex":903,"jp":"オオニューラ","types":["fighting","poison"],"img":"903.png","spd":120},{"id":"1137","dex":908,"jp":"マスカーニャ","types":["grass","dark"],"img":"908.png","spd":123},{"id":"1140","dex":911,"jp":"ラウドボーン","types":["fire","ghost"],"img":"911.png","spd":66},{"id":"1143","dex":914,"jp":"ウェーニバル","types":["water","fighting"],"img":"914.png","spd":85},{"id":"1157","dex":925,"jp":"イッカネズミ(3びきかぞく)","types":["normal"],"img":"925.png","spd":111},{"id":"1281","dex":925,"jp":"イッカネズミ(4ひきかぞく)","types":["normal"],"img":"925_1.png","spd":111},{"id":"1169","dex":934,"jp":"キョジオーン","types":["rock"],"img":"934.png","spd":35},{"id":"1172","dex":936,"jp":"グレンアルマ","types":["fire","psychic"],"img":"936.png","spd":75},{"id":"1173","dex":937,"jp":"ソウブレイズ","types":["fire","ghost"],"img":"937.png","spd":85},{"id":"1175","dex":939,"jp":"ハラバリー","types":["electric"],"img":"939.png","spd":45},{"id":"1193","dex":952,"jp":"スコヴィラン","types":["grass","fire"],"img":"952.png","spd":75},{"id":"1194","dex":952,"jp":"メガスコヴィラン","types":["grass","fire"],"img":"952_1.png","spd":75},{"id":"1198","dex":956,"jp":"クエスパトラ","types":["psychic"],"img":"956.png","spd":105},{"id":"1201","dex":959,"jp":"デカヌチャン","types":["fairy","steel"],"img":"959.png","spd":94},{"id":"1206","dex":964,"jp":"イルカマン(ナイーブ)","types":["water"],"img":"964.png","spd":100},{"id":"1207","dex":964,"jp":"イルカマン(マイティ)","types":["water"],"img":"964_1.png","spd":100},{"id":"1211","dex":968,"jp":"ミミズズ","types":["steel"],"img":"968.png","spd":65},{"id":"1213","dex":970,"jp":"キラフロル","types":["rock","poison"],"img":"970.png","spd":86},{"id":"1214","dex":970,"jp":"メガキラフロル","types":["rock","poison"],"img":"970_1.png","spd":101},{"id":"1179","dex":981,"jp":"リキキリン","types":["normal","psychic"],"img":"981.png","spd":60},{"id":"1220","dex":983,"jp":"ドドゲザン","types":["dark","steel"],"img":"983.png","spd":50},{"id":"1261","dex":1013,"jp":"ヤバソチャ","types":["grass","ghost"],"img":"1013.png","spd":70},{"id":"1271","dex":1018,"jp":"ブリジュラス","types":["steel","dragon"],"img":"1018.png","spd":85},{"id":"1275","dex":1019,"jp":"カミツオロチ","types":["grass","dragon"],"img":"1019.png","spd":44}];
+
+// ====== 攻撃/特攻種族値（PokeAPIより） ======
+// { id: [atk, spa] } — 物理/特殊型判定の基礎データ
+const POKE_STATS={'3':[82,100],'4':[100,122],'7':[84,109],'8':[130,130],'9':[104,159],'12':[83,85],'13':[103,135],'19':[90,45],'20':[150,15],'23':[80,70],'24':[80,135],'32':[95,65],'33':[55,50],'34':[90,90],'35':[85,95],'49':[70,95],'50':[80,135],'53':[76,81],'54':[67,81],'81':[110,100],'82':[115,95],'88':[50,135],'89':[50,175],'92':[130,65],'95':[105,100],'96':[125,135],'111':[75,100],'112':[75,130],'113':[100,100],'130':[65,130],'131':[65,170],'157':[95,40],'158':[125,60],'164':[75,100],'165':[100,130],'172':[125,55],'173':[155,65],'174':[100,40],'1184':[110,30],'1185':[110,30],'1186':[110,30],'176':[125,60],'177':[155,70],'179':[48,48],'181':[65,110],'182':[65,110],'183':[130,95],'189':[105,60],'190':[135,70],'191':[110,65],'200':[134,100],'201':[124,145],'208':[92,143],'209':[92,143],'212':[84,109],'213':[84,119],'216':[105,79],'217':[160,89],'225':[90,60],'238':[75,115],'239':[95,165],'242':[50,60],'244':[75,90],'254':[65,130],'255':[65,60],'257':[75,100],'258':[65,110],'264':[90,60],'267':[85,55],'268':[125,55],'273':[130,55],'274':[150,65],'276':[125,40],'277':[185,40],'292':[80,40],'293':[140,40],'295':[90,110],'296':[90,140],'315':[134,95],'316':[164,95],'352':[50,95],'355':[65,125],'356':[85,165],'376':[75,65],'377':[85,85],'382':[110,60],'383':[140,60],'385':[60,60],'386':[100,80],'388':[75,105],'389':[75,135],'398':[120,95],'399':[140,110],'403':[100,105],'404':[120,145],'405':[85,85],'415':[70,70],'416':[110,110],'432':[60,100],'433':[70,70],'434':[70,70],'435':[70,70],'436':[70,70],'439':[115,83],'440':[165,93],'444':[50,95],'445':[50,135],'446':[130,75],'447':[150,115],'451':[80,80],'452':[120,120],'489':[109,75],'492':[104,104],'495':[86,111],'506':[120,95],'508':[70,125],'510':[165,65],'512':[52,47],'536':[76,54],'537':[136,54],'551':[92,92],'554':[130,80],'555':[170,120],'559':[110,115],'560':[145,140],'563':[112,68],'568':[106,86],'574':[92,92],'575':[132,132],'576':[120,45],'579':[140,55],'585':[110,60],'586':[60,130],'587':[95,45],'588':[130,70],'590':[125,65],'591':[165,65],'594':[80,80],'595':[80,140],'596':[50,95],'597':[65,105],'598':[65,105],'599':[65,105],'600':[65,105],'601':[65,105],'625':[75,75],'628':[123,100],'629':[148,110],'632':[100,108],'633':[108,100],'635':[85,60],'640':[88,88],'642':[98,98],'644':[98,98],'646':[98,98],'661':[135,50],'662':[165,65],'663':[60,60],'664':[60,80],'667':[140,55],'681':[67,77],'690':[117,65],'706':[50,95],'712':[95,60],'715':[105,120],'716':[100,125],'724':[65,125],'729':[95,110],'738':[75,75],'763':[55,145],'764':[75,175],'769':[130,70],'773':[66,81],'774':[81,66],'779':[124,55],'780':[159,70],'793':[105,125],'795':[60,135],'817':[107,74],'818':[137,74],'821':[69,114],'822':[69,159],'825':[95,103],'826':[125,133],'828':[56,50],'831':[81,74],'834':[52,90],'842':[65,125],'843':[85,155],'844':[65,112],'848':[124,69],'849':[80,65],'851':[48,83],'852':[48,83],'853':[48,143],'854':[48,143],'857':[50,50],'858':[50,50],'860':[72,99],'862':[80,85],'873':[73,120],'875':[55,109],'877':[121,69],'879':[77,99],'880':[65,110],'881':[92,74],'882':[137,74],'883':[58,81],'888':[100,110],'889':[100,110],'890':[80,80],'892':[110,65],'897':[90,58],'898':[90,58],'899':[90,58],'900':[90,58],'902':[117,44],'903':[127,34],'905':[70,97],'919':[107,100],'920':[112,95],'923':[115,80],'926':[74,126],'929':[120,75],'936':[132,62],'937':[157,62],'946':[115,55],'947':[115,55],'948':[115,55],'952':[63,53],'954':[125,55],'956':[70,50],'962':[64,111],'967':[120,50],'969':[60,90],'970':[120,40],'984':[90,50],'986':[60,135],'987':[85,160],'991':[110,100],'1037':[87,53],'1055':[110,95],'1056':[85,100],'1058':[107,65],'1071':[65,134],'1075':[90,136],'1083':[85,110],'1084':[95,50],'1086':[60,110],'1097':[95,70],'1108':[120,100],'1126':[105,105],'1127':[135,45],'1129':[112,80],'1130':[112,80],'1131':[130,40],'1137':[110,81],'1140':[75,110],'1143':[120,85],'1157':[75,65],'1281':[75,65],'1169':[100,45],'1172':[60,125],'1173':[125,60],'1175':[64,103],'1193':[108,108],'1194':[138,138],'1198':[60,101],'1201':[75,70],'1206':[70,53],'1207':[70,53],'1211':[85,60],'1213':[55,130],'1214':[90,150],'1179':[90,110],'1220':[135,60],'1261':[60,121],'1271':[105,125],'1275':[80,120]};
+
+// ====== 写真から敵チーム検出 (Gemini Vision) ======
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_URL = (key) => `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+const GEMINI_KEY_STORAGE = 'gemini_api_key_v1';
+
+// 画像を最大幅にリサイズしてJPEGに変換（API費用とレイテンシを節約）
+async function resizeImageForApi(file, maxWidth = 1280) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxWidth / img.width);
+      const w = Math.max(1, Math.floor(img.width * scale));
+      const h = Math.max(1, Math.floor(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(b => {
+        if (!b) return reject(new Error('画像変換に失敗しました'));
+        resolve(new File([b], 'detect.jpg', { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めません')); };
+    img.src = url;
+  });
+}
+
+async function fileToBase64Data(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.split(',')[1]);
+    r.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+    r.readAsDataURL(file);
+  });
+}
+
+// Gemini Vision に敵チーム6体の日本語名を問い合わせる
+async function detectPokemonFromImage(apiKey, base64, mime) {
+  const rosterList = ROSTER.map(r => r.jp).join('／');
+  const prompt = `この画像は「ポケモンチャンピオンズ」というゲームの対戦選出画面です。画像に映っている敵ポケモン最大6体の名前を、画面の表示順に、日本語で正確に列挙してください。
+
+ルール:
+- メガ進化は「メガXXX」、アローラのすがたは「アローラXXX」、ガラルは「ガラルXXX」、ヒスイは「ヒスイXXX」、パルデアは「パルデアXXX」と表記してください。
+- ロトムのフォルム（ヒート/ウォッシュ/フロスト/スピン/カット）やポワルン（たいよう/あまみず/ゆきぐも）など、フォルムチェンジがある場合は該当フォルム名を含めてください。
+- 以下は「ポケモンチャンピオンズ」参戦リストです。出力はこのリストの表記に合わせてください（完全一致）:
+${rosterList}
+- 画像から読み取れた範囲だけを返し、推測は避けてください。識別不能なら "不明" と返してください。
+- 必ず配列に最大6件まで入れてください。
+
+JSON形式で返答してください: {"pokemon": ["名前1", "名前2", "名前3", "名前4", "名前5", "名前6"]}`;
+
+  const resp = await fetch(GEMINI_URL(apiKey), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { text: prompt },
+        { inline_data: { mime_type: mime, data: base64 } },
+      ]}],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+      },
+    }),
+  });
+  if (!resp.ok) {
+    let msg = `APIエラー (HTTP ${resp.status})`;
+    try { const j = await resp.json(); if (j.error?.message) msg = j.error.message; } catch(e) {}
+    throw new Error(msg);
+  }
+  const json = await resp.json();
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  if (!text) throw new Error('空のレスポンスが返されました');
+  let parsed;
+  try { parsed = JSON.parse(text); } catch(e) { throw new Error('JSONパース失敗: ' + text.slice(0, 120)); }
+  return Array.isArray(parsed.pokemon) ? parsed.pokemon : [];
+}
+
+// ROSTER から日本語名でポケモンを検索（厳密→カッコ無視→部分一致）
+function findRosterByJpName(name) {
+  if (!name) return null;
+  const n = String(name).trim();
+  if (!n || n === '不明' || n === '不明なポケモン') return null;
+  // 完全一致
+  const exact = ROSTER.find(r => r.jp === n);
+  if (exact) return exact;
+  // カッコを除去して比較
+  const strip = s => s.replace(/[（(].+?[)）]/g, '').trim();
+  const nStripped = strip(n);
+  const strippedExact = ROSTER.find(r => strip(r.jp) === nStripped);
+  if (strippedExact) return strippedExact;
+  // メガ/アローラ等の接頭辞マッチ
+  const prefixes = ['メガ', 'アローラ', 'ガラル', 'ヒスイ', 'パルデア'];
+  for (const pre of prefixes) {
+    if (n.startsWith(pre)) {
+      const body = n.slice(pre.length);
+      const withPre = ROSTER.find(r => r.jp === pre + body || strip(r.jp) === pre + strip(body));
+      if (withPre) return withPre;
+    }
+  }
+  // 部分一致（入力が長い場合は含有、短い場合は前方一致優先）
+  const partial = ROSTER.find(r => r.jp.includes(nStripped)) ||
+    ROSTER.find(r => nStripped.includes(strip(r.jp)));
+  return partial || null;
+}
+
+// ROSTER エントリ → 敵スロット形式
+function rosterToSlot(r) {
+  if (!r) return null;
+  return { id: r.id, dex: r.dex, jp: r.jp, types: r.types, img: r.img, spd: r.spd, name: r.jp };
+}
 
 // ====== Supabase同期 ======
 const SUPABASE_URL = 'https://qaflnljielffykrsyhei.supabase.co';
@@ -474,13 +772,22 @@ function TeamSetup({team, setTeam}) {
 
   const setSlot = (idx, poke) => {
     const copy = [...team];
-    copy[idx] = { ...poke, moves: copy[idx]?.moves || [{name:'',type:''},{name:'',type:''},{name:'',type:''},{name:'',type:''}] };
+    copy[idx] = {
+      ...poke,
+      moves: copy[idx]?.moves || [{name:'',type:''},{name:'',type:''},{name:'',type:''},{name:'',type:''}],
+      item: copy[idx]?.item || '',
+    };
     setTeam(copy);
     setPickerIdx(null);
   };
   const setMove = (pIdx, mIdx, field, value) => {
     const copy = [...team];
     copy[pIdx].moves[mIdx] = { ...copy[pIdx].moves[mIdx], [field]: value };
+    setTeam(copy);
+  };
+  const setItem = (idx, item) => {
+    const copy = [...team];
+    copy[idx] = { ...copy[idx], item };
     setTeam(copy);
   };
   const clearSlot = idx => {
@@ -494,20 +801,26 @@ function TeamSetup({team, setTeam}) {
       <div className="text-sm text-gray-600">自軍6体と各4技を登録。技はタイプだけ合っていればOK（弱点判定に使用）。</div>
       {team.some(Boolean) && (
         <div className="bg-white border rounded-lg p-2">
-          <div className="text-xs font-bold text-gray-600 mb-1.5">素早さ一覧（速い順）</div>
+          <div className="text-xs font-bold text-gray-600 mb-1.5">素早さ一覧（速い順・スカーフ込み）</div>
           <div className="flex flex-wrap gap-1.5">
-            {team.filter(Boolean).slice().sort((a,b)=>(b.spd||0)-(a.spd||0)).map((p,i) => (
-              <div key={p.id+'-'+i} className="flex items-center gap-1 bg-gray-50 rounded px-1.5 py-0.5">
-                <img src={pokeImg(p)} onError={e=>{e.target.src=pokeImgFallback(p)}} className="w-6 h-6 object-contain" />
-                <span className="text-[10px] truncate max-w-[90px]">{p.jp}</span>
-                <span className="text-[11px] font-bold text-blue-700">S{p.spd ?? '?'}</span>
-              </div>
-            ))}
+            {team.filter(Boolean).slice().sort((a,b)=>effectiveSpeed(b)-effectiveSpeed(a)).map((p,i) => {
+              const eff = effectiveSpeed(p);
+              const boosted = p.item === 'choice_scarf';
+              return (
+                <div key={p.id+'-'+i} className="flex items-center gap-1 bg-gray-50 rounded px-1.5 py-0.5">
+                  <img src={pokeImg(p)} onError={e=>{e.target.src=pokeImgFallback(p)}} className="w-6 h-6 object-contain" />
+                  <span className="text-[10px] truncate max-w-[90px]">{p.jp}</span>
+                  <span className={`text-[11px] font-bold ${boosted?'text-purple-700':'text-blue-700'}`}>
+                    S{eff}{boosted && <span className="text-[9px] opacity-70">(×1.5)</span>}
+                  </span>
+                </div>
+              );
+            })}
           </div>
           <div className="text-[10px] text-gray-500 mt-1">
-            平均 S{Math.round(team.filter(Boolean).reduce((s,p)=>s+(p.spd||0),0)/Math.max(1,team.filter(Boolean).length))}
-            ・最速 S{Math.max(0,...team.filter(Boolean).map(p=>p.spd||0))}
-            ・最遅 S{team.filter(Boolean).length ? Math.min(...team.filter(Boolean).map(p=>p.spd||0)) : 0}
+            平均 S{Math.round(team.filter(Boolean).reduce((s,p)=>s+effectiveSpeed(p),0)/Math.max(1,team.filter(Boolean).length))}
+            ・最速 S{Math.max(0,...team.filter(Boolean).map(p=>effectiveSpeed(p)))}
+            ・最遅 S{team.filter(Boolean).length ? Math.min(...team.filter(Boolean).map(p=>effectiveSpeed(p))) : 0}
           </div>
         </div>
       )}
@@ -537,7 +850,14 @@ function TeamSetup({team, setTeam}) {
                       </div>
                       <div className="flex gap-1 mt-1 flex-wrap items-center">
                         {p.types.map(t => <TypeBadge key={t} type={t} />)}
-                        {p.spd !== undefined && <span className="text-[10px] font-bold text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">S{p.spd}</span>}
+                        {p.spd !== undefined && (
+                          <span className="text-[10px] font-bold text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
+                            S{p.spd}{p.item === 'choice_scarf' && <span className="text-purple-600">→{effectiveSpeed(p)}</span>}
+                          </span>
+                        )}
+                        <BiasBadge bias={classifyByStats(p.id)} compact />
+                        <BiasBadge bias={classifyByMoves(p.moves)} />
+                        <ItemBadge itemId={p.item} />
                       </div>
                       <button onClick={()=>setPickerIdx(i)} className="text-xs text-blue-600 hover:underline mt-1">変更</button>
                     </div>
@@ -550,17 +870,52 @@ function TeamSetup({team, setTeam}) {
               </div>
               {p && (
                 <div className="mt-3 space-y-1.5">
-                  <div className="text-xs font-bold text-gray-600">わざ</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-gray-600 whitespace-nowrap">持ち物</span>
+                    <select value={p.item || ''} onChange={e=>setItem(i, e.target.value)}
+                      className="flex-1 border rounded px-2 py-1 text-xs bg-white">
+                      <option value="">— なし —</option>
+                      {ITEM_GROUPS.map(g => (
+                        <optgroup key={g.key} label={g.label}>
+                          {ITEMS.filter(it => it.group === g.key).map(it => {
+                            const suffix = it.typeBoost ? ` (${TYPE_JP[it.typeBoost]}×1.2)`
+                              : it.resist ? ` (${TYPE_JP[it.resist]}技半減)`
+                              : it.desc ? ` — ${it.desc}`
+                              : '';
+                            return (
+                              <option key={it.id} value={it.id}>
+                                {it.emoji} {it.jp}{suffix}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-xs font-bold text-gray-600 pt-1">わざ</div>
                   {[0,1,2,3].map(m => (
-                    <div key={m} className="flex gap-1.5">
+                    <div key={m} className="flex gap-1.5 flex-wrap">
                       <input type="text" placeholder={`技${m+1}（名前）`} value={p.moves[m]?.name || ''}
                         onChange={e=>setMove(i,m,'name',e.target.value)}
-                        className="flex-1 border rounded px-2 py-1 text-xs" />
+                        className="flex-1 min-w-[120px] border rounded px-2 py-1 text-xs" />
                       <select value={p.moves[m]?.type || ''} onChange={e=>setMove(i,m,'type',e.target.value)}
                         className="border rounded px-1 py-1 text-xs w-24">
                         <option value="">タイプ</option>
                         {TYPES.map(t=><option key={t} value={t}>{TYPE_JP[t]}</option>)}
                       </select>
+                      <div className="flex gap-0.5" role="group" aria-label="分類">
+                        {['物','特','変'].map(c => {
+                          const active = p.moves[m]?.cat === c;
+                          return (
+                            <button key={c} type="button"
+                              onClick={()=>setMove(i,m,'cat', active ? '' : c)}
+                              title={c==='物'?'物理':(c==='特'?'特殊':'変化')}
+                              className={`w-7 h-7 text-xs font-bold rounded border transition ${active ? MOVE_CAT_CLS[c]+' border-transparent' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>
+                              {c}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -597,19 +952,28 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
   userTeam.forEach((up, pi) => {
     if (!up) return;
     up.moves?.forEach(mv => {
-      if (!mv.type) return;
+      if (!mv.type || mv.cat === '変') return;
       const m = defensiveMult(mv.type, opp.types);
       if (m >= 2) {
         const stab = up.types.includes(mv.type);
-        hits.push({ userIdx:pi, userJp:up.jp, moveName:mv.name || '(無名)', moveType:mv.type, mult:m, stab, score: m * (stab?1.5:1) });
+        const offF = offensiveFactor(up, mv);
+        const itemF = itemFactor(up, mv);
+        const score = m * (stab ? 1.5 : 1) * offF * itemF;
+        hits.push({
+          userIdx:pi, userJp:up.jp,
+          moveName: mv.name || '(無名)', moveType: mv.type, moveCat: mv.cat,
+          mult: m, stab, offF, itemF, score,
+          userItem: up.item || '',
+          userStats: POKE_STATS[up.id] || null,
+        });
       }
     });
   });
   hits.sort((a,b)=>b.score - a.score);
 
-  // 素早さ比較
-  const oppSpd = opp.spd || 0;
-  const userFaster = userTeam.filter(u => u && (u.spd||0) > oppSpd).length;
+  // 素早さ比較（スカーフ込み実効素早さで判定）
+  const oppSpd = effectiveSpeed(opp);
+  const userFaster = userTeam.filter(u => u && effectiveSpeed(u) > oppSpd).length;
   const userTeamFilled = userTeam.filter(Boolean).length;
 
   return (
@@ -635,6 +999,7 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
           <div className="flex gap-1 mt-1 flex-wrap items-center">
             {opp.types.map(t => <TypeBadge key={t} type={t} />)}
             {opp.spd !== undefined && <span className="text-[10px] font-bold text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">S{opp.spd}</span>}
+            <BiasBadge bias={classifyByStats(opp.id)} />
             {userTeamFilled > 0 && (
               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${userFaster>=Math.ceil(userTeamFilled/2)?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
                 先攻{userFaster}/{userTeamFilled}
@@ -679,17 +1044,45 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
           <div className="text-xs text-gray-400">抜群を取れる登録技なし</div>
         ) : (
           <div className="space-y-1">
-            {hits.map((h, i) => (
-              <div key={i} className="flex items-center gap-1.5 text-xs">
-                <MultBadge mult={h.mult} />
-                {h.stab && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-300 text-yellow-900">一致</span>}
-                <TypeBadge type={h.moveType} />
-                <span className="truncate flex-1">
-                  <span className="font-medium">{h.userJp}</span>
-                  <span className="text-gray-500"> / {h.moveName}</span>
-                </span>
-              </div>
-            ))}
+            {hits.map((h, i) => {
+              const scoreCls = h.score >= 6 ? 'bg-red-600 text-white'
+                : h.score >= 4 ? 'bg-red-500 text-white'
+                : h.score >= 3 ? 'bg-orange-500 text-white'
+                : 'bg-gray-200 text-gray-700';
+              const it = ITEM_MAP[h.userItem];
+              const showItemBoost = (h.itemF && h.itemF !== 1);
+              const statLabel = h.moveCat === '物' ? 'A' : (h.moveCat === '特' ? 'C' : '');
+              const statVal = h.userStats && h.moveCat ? (h.moveCat === '物' ? h.userStats[0] : h.userStats[1]) : null;
+              return (
+                <div key={i} className="flex items-center gap-1 text-xs flex-wrap">
+                  <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${scoreCls}`} title={`総合スコア ${h.score.toFixed(2)}`}>
+                    ×{h.score.toFixed(1)}
+                  </span>
+                  <MultBadge mult={h.mult} />
+                  {h.stab && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-300 text-yellow-900">一致</span>}
+                  <TypeBadge type={h.moveType} />
+                  {h.moveCat && (
+                    <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${MOVE_CAT_CLS[h.moveCat]}`}>{h.moveCat}</span>
+                  )}
+                  {statVal !== null && (
+                    <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${h.offF < 0.9 ? 'bg-gray-200 text-gray-500' : (h.offF >= 1.3 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700')}`}
+                      title={`攻撃側補正 ×${h.offF.toFixed(2)}`}>
+                      {statLabel}{statVal}
+                    </span>
+                  )}
+                  {showItemBoost && it && (
+                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300"
+                      title={`${it.jp} ×${h.itemF}`}>
+                      {it.emoji}×{h.itemF}
+                    </span>
+                  )}
+                  <span className="truncate flex-1 min-w-0">
+                    <span className="font-medium">{h.userJp}</span>
+                    <span className="text-gray-500"> / {h.moveName}</span>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -764,9 +1157,9 @@ function AnalysisPanel({userTeam, opponents}) {
   if (!ready) return null;
 
   const scoreColor = (s) => {
-    if (s >= 4) return 'bg-red-600 text-white';
-    if (s >= 3) return 'bg-red-500 text-white';
-    if (s >= 2) return 'bg-orange-500 text-white';
+    if (s >= 6) return 'bg-red-600 text-white';
+    if (s >= 4) return 'bg-red-500 text-white';
+    if (s >= 2.5) return 'bg-orange-500 text-white';
     if (s >= 1) return 'bg-gray-200 text-gray-700';
     if (s > 0) return 'bg-blue-400 text-white';
     return 'bg-gray-800 text-white';
@@ -784,12 +1177,20 @@ function AnalysisPanel({userTeam, opponents}) {
           {/* 推奨選出3体 */}
           {users.length >= 3 && trio && (
             <div>
-              <div className="text-xs font-bold text-gray-600 mb-1.5">⭐ 推奨選出3体（{trio.covered}/{opps.length}体抑制）</div>
+              <div className="text-xs font-bold text-gray-600 mb-1.5">
+                ⭐ 推奨選出3体（{trio.covered}/{opps.length}体抑制・合計スコア{trio.scoreSum.toFixed(1)}）
+              </div>
               <div className="flex gap-2 flex-wrap">
                 {trio.combo.map((u,i) => (
                   <div key={i} className="border rounded p-1.5 bg-blue-50 flex items-center gap-1.5">
                     <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-10 h-10 object-contain" />
-                    <div className="text-xs font-bold">{u.jp}</div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold truncate max-w-[100px]">{u.jp}</div>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)}</span>
+                        <ItemBadge itemId={u.item} compact />
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -798,7 +1199,7 @@ function AnalysisPanel({userTeam, opponents}) {
 
           {/* マトリクス 6x6 */}
           <div>
-            <div className="text-xs font-bold text-gray-600 mb-1.5">🔲 相性マトリクス（自軍 × 相手 / 一致技込み倍率）</div>
+            <div className="text-xs font-bold text-gray-600 mb-1.5">🔲 相性マトリクス（一致+AC種族値+持ち物込み総合スコア）</div>
             <div className="overflow-x-auto">
               <table className="text-xs border-collapse">
                 <thead>
@@ -808,7 +1209,7 @@ function AnalysisPanel({userTeam, opponents}) {
                       <th key={i} className="p-1 border bg-gray-50 text-center">
                         <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-8 h-8 object-contain mx-auto" />
                         <div className="text-[9px] truncate max-w-[60px]">{o.jp}</div>
-                        <div className="text-[9px] text-gray-500">S{o.spd||'?'}</div>
+                        <div className="text-[9px] text-gray-500">S{effectiveSpeed(o)||'?'}</div>
                       </th>
                     ))}
                   </tr>
@@ -821,20 +1222,27 @@ function AnalysisPanel({userTeam, opponents}) {
                           <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-8 h-8 object-contain" />
                           <div className="min-w-0">
                             <div className="text-[10px] truncate max-w-[70px]">{u.jp}</div>
-                            <div className="text-[9px] text-gray-500">S{u.spd||'?'}</div>
+                            <div className="flex items-center gap-0.5">
+                              <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)||'?'}</span>
+                              {u.item && ITEM_MAP[u.item] && <span className="text-[9px]" title={ITEM_MAP[u.item].jp}>{ITEM_MAP[u.item].emoji}</span>}
+                            </div>
                           </div>
                         </div>
                       </td>
                       {opps.map((o,oi) => {
                         const h = matrix[ui][oi];
-                        const us = u.spd||0, os = o.spd||0;
+                        const us = effectiveSpeed(u), os = effectiveSpeed(o);
                         const spdMark = us > os ? '先' : us < os ? '後' : '=';
                         const spdCls = us > os ? 'text-green-700 bg-green-100' : us < os ? 'text-red-700 bg-red-100' : 'text-gray-500 bg-gray-100';
+                        const tip = h.mv
+                          ? `${h.mv.name||'(無名)'} (${h.mv.cat||'?'})\n倍率×${h.mult} × 一致${h.stab?'1.5':'1'} × AC補正${h.offF.toFixed(2)} × 持ち物${h.itemF.toFixed(2)}\n= ${h.score.toFixed(2)}`
+                          : '有効打なし';
                         return (
-                          <td key={oi} className={`p-1 border text-center font-bold ${scoreColor(h.score)}`}>
+                          <td key={oi} className={`p-1 border text-center font-bold ${scoreColor(h.score)}`} title={tip}>
                             <div>{fmt(h.score)}×</div>
                             <div className="flex gap-0.5 justify-center items-center text-[8px] font-normal mt-0.5">
-                              {h.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一致</span>}
+                              {h.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一</span>}
+                              {h.itemF > 1 && <span className="px-0.5 rounded bg-amber-200 text-amber-900">持</span>}
                               <span className={`px-0.5 rounded ${spdCls}`}>{spdMark}</span>
                             </div>
                           </td>
@@ -903,9 +1311,272 @@ function AnalysisPanel({userTeam, opponents}) {
   );
 }
 
+// ====== 写真検出モーダル ======
+function PhotoDetectModal({onApply, onClose}) {
+  const [apiKey, setApiKey] = useState('');
+  const [showKeyEditor, setShowKeyEditor] = useState(false);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const [error, setError] = useState('');
+  const [rawNames, setRawNames] = useState([]);
+  const [slots, setSlots] = useState([null,null,null,null,null,null]);
+  const [overrideIdx, setOverrideIdx] = useState(null);
+  const fileInputRef = useRef(null);
+
+  // 初回: localStorage からAPIキー読み込み
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(GEMINI_KEY_STORAGE) || '';
+      setApiKey(saved);
+      if (!saved) setShowKeyEditor(true);
+    } catch(e) {}
+  }, []);
+
+  // プレビューURLのクリーンアップ
+  useEffect(() => {
+    return () => { if (previewUrl) URL.revokeObjectURL(previewUrl); };
+  }, [previewUrl]);
+
+  const handleSaveKey = () => {
+    const k = keyDraft.trim();
+    if (!k) return;
+    try { localStorage.setItem(GEMINI_KEY_STORAGE, k); } catch(e) {}
+    setApiKey(k);
+    setKeyDraft('');
+    setShowKeyEditor(false);
+    setError('');
+  };
+  const handleClearKey = () => {
+    try { localStorage.removeItem(GEMINI_KEY_STORAGE); } catch(e) {}
+    setApiKey('');
+    setShowKeyEditor(true);
+  };
+
+  const handleFileChange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setError('');
+    setRawNames([]);
+    setSlots([null,null,null,null,null,null]);
+    try {
+      const resized = await resizeImageForApi(f, 1280);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(resized));
+      setFile(resized);
+    } catch(err) {
+      setError(err.message || '画像の処理に失敗しました');
+    }
+  };
+
+  const handleDetect = async () => {
+    if (!apiKey) { setError('Gemini APIキーを入力してください'); setShowKeyEditor(true); return; }
+    if (!file) { setError('画像を選択してください'); return; }
+    setError('');
+    setDetecting(true);
+    try {
+      const base64 = await fileToBase64Data(file);
+      const names = await detectPokemonFromImage(apiKey, base64, file.type || 'image/jpeg');
+      const trimmed = names.slice(0, 6);
+      const matched = trimmed.map(n => {
+        const r = findRosterByJpName(n);
+        return r ? rosterToSlot(r) : null;
+      });
+      // 6スロットに揃える
+      while (matched.length < 6) matched.push(null);
+      setRawNames(trimmed);
+      setSlots(matched);
+    } catch(err) {
+      setError(err.message || 'AI検出に失敗しました');
+    } finally {
+      setDetecting(false);
+    }
+  };
+
+  const handleSlotChange = (idx, poke) => {
+    const copy = [...slots];
+    copy[idx] = poke;
+    setSlots(copy);
+    setOverrideIdx(null);
+  };
+  const handleSlotClear = (idx) => {
+    const copy = [...slots];
+    copy[idx] = null;
+    setSlots(copy);
+  };
+
+  const hasAnyResult = slots.some(Boolean);
+  const canApply = hasAnyResult;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg w-full max-w-3xl max-h-[95vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+        <div className="p-3 border-b flex items-center justify-between">
+          <h3 className="text-base sm:text-lg font-bold">📷 写真から相手チーム検出</h3>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded"><IconX className="w-5 h-5" /></button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-3 space-y-3">
+          {/* APIキー管理 */}
+          <div className="border rounded-lg bg-gray-50 p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs font-bold text-gray-700">Gemini APIキー</div>
+              {apiKey && !showKeyEditor && (
+                <div className="flex gap-1.5">
+                  <button onClick={()=>{setKeyDraft(apiKey); setShowKeyEditor(true);}}
+                    className="text-[11px] text-blue-600 hover:underline">変更</button>
+                  <button onClick={handleClearKey}
+                    className="text-[11px] text-red-600 hover:underline">削除</button>
+                </div>
+              )}
+            </div>
+            {apiKey && !showKeyEditor ? (
+              <div className="text-[11px] text-gray-600 font-mono">
+                保存済み: ****{apiKey.slice(-6)} <span className="text-gray-400">(この端末にのみ保存)</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <input
+                  type="password"
+                  value={keyDraft}
+                  onChange={e=>setKeyDraft(e.target.value)}
+                  placeholder="AIza..."
+                  className="w-full border rounded px-2 py-1 text-sm font-mono"
+                />
+                <div className="flex items-center gap-2">
+                  <button onClick={handleSaveKey} disabled={!keyDraft.trim()}
+                    className="text-xs font-bold px-2.5 py-1 rounded bg-blue-600 text-white disabled:bg-gray-300">
+                    保存
+                  </button>
+                  {apiKey && (
+                    <button onClick={()=>{setShowKeyEditor(false); setKeyDraft('');}}
+                      className="text-xs px-2.5 py-1 rounded border">キャンセル</button>
+                  )}
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"
+                    className="text-[11px] text-blue-600 hover:underline ml-auto">APIキー取得 →</a>
+                </div>
+                <div className="text-[10px] text-gray-500">※ この端末のみに保存されます（同期対象外）</div>
+              </div>
+            )}
+          </div>
+
+          {/* 画像アップロード */}
+          <div className="border rounded-lg p-2.5 space-y-2">
+            <div className="text-xs font-bold text-gray-700">選出画面のスクショ / 写真</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleFileChange}
+                className="text-xs"
+              />
+              {file && (
+                <span className="text-[11px] text-gray-500">
+                  {Math.round(file.size/1024)}KB
+                </span>
+              )}
+            </div>
+            {previewUrl && (
+              <div className="mt-1">
+                <img src={previewUrl} alt="プレビュー" className="max-h-48 rounded border" />
+              </div>
+            )}
+            <button
+              onClick={handleDetect}
+              disabled={!file || detecting || !apiKey}
+              className="w-full text-sm font-bold px-3 py-2 rounded bg-emerald-600 text-white disabled:bg-gray-300"
+            >
+              {detecting ? '🔍 AI検出中...' : '✨ AIで検出する'}
+            </button>
+            {error && (
+              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                {error}
+              </div>
+            )}
+          </div>
+
+          {/* 検出結果 */}
+          {(rawNames.length > 0 || hasAnyResult) && (
+            <div className="border rounded-lg p-2.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold text-gray-700">検出結果 (必要に応じて修正)</div>
+                <div className="text-[10px] text-gray-500">
+                  マッチ {slots.filter(Boolean).length}/{rawNames.length || 6}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {[0,1,2,3,4,5].map(i => {
+                  const s = slots[i];
+                  const raw = rawNames[i];
+                  return (
+                    <div key={i} className="border rounded p-2 bg-gray-50">
+                      <div className="text-[10px] text-gray-500 mb-1">#{i+1}</div>
+                      {s ? (
+                        <div className="flex items-center gap-2">
+                          <img src={gwImgUrl(s.img)} alt="" className="w-10 h-10 object-contain bg-white rounded"
+                            onError={e => { e.target.src = artworkUrl(s.dex); }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold truncate">{s.jp}</div>
+                            <div className="text-[10px] text-gray-500">S{s.spd}</div>
+                          </div>
+                        </div>
+                      ) : raw ? (
+                        <div className="text-xs text-amber-700">
+                          <div className="font-bold truncate">❓ {raw}</div>
+                          <div className="text-[10px] text-gray-500">未マッチ</div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-400">（空き）</div>
+                      )}
+                      <div className="flex gap-1 mt-1.5">
+                        <button onClick={()=>setOverrideIdx(i)}
+                          className="flex-1 text-[11px] px-1.5 py-0.5 rounded border bg-white hover:bg-blue-50">
+                          {s ? '変更' : '選択'}
+                        </button>
+                        {s && (
+                          <button onClick={()=>handleSlotClear(i)}
+                            className="text-[11px] px-1.5 py-0.5 rounded border bg-white text-red-600 hover:bg-red-50">
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-3 border-t flex items-center justify-end gap-2">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 rounded border">キャンセル</button>
+          <button
+            onClick={()=>{ onApply(slots); onClose(); }}
+            disabled={!canApply}
+            className="text-sm font-bold px-3 py-1.5 rounded bg-blue-600 text-white disabled:bg-gray-300"
+          >
+            この結果を相手チームに反映
+          </button>
+        </div>
+
+        {overrideIdx !== null && (
+          <PokemonPicker
+            onSelect={p => handleSlotChange(overrideIdx, p)}
+            onClose={() => setOverrideIdx(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BattleView({opponents, setOpponents, userTeam}) {
   const [pickerIdx, setPickerIdx] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [showPhotoDetect, setShowPhotoDetect] = useState(false);
 
   const setSlot = (idx, poke) => {
     const copy = [...opponents];
@@ -932,6 +1603,17 @@ function BattleView({opponents, setOpponents, userTeam}) {
   const filled = opponents.filter(Boolean).length;
   const teamReady = userTeam.some(Boolean);
 
+  // 相手構成の物理/特殊バイアス集計
+  const biasSummary = useMemo(() => {
+    const counts = { phys:0, spec:0, mixed:0 };
+    opponents.forEach(o => {
+      if (!o) return;
+      const b = classifyByStats(o.id);
+      if (b) counts[b.key] = (counts[b.key]||0) + 1;
+    });
+    return counts;
+  }, [opponents]);
+
   return (
     <div className="space-y-3">
       {!teamReady && (
@@ -941,21 +1623,60 @@ function BattleView({opponents, setOpponents, userTeam}) {
         </div>
       )}
       <AnalysisPanel userTeam={userTeam} opponents={opponents} />
-      <div className="flex items-center justify-between gap-2">
+      {filled > 0 && (biasSummary.phys + biasSummary.spec + biasSummary.mixed > 0) && (
+        <div className="bg-gray-50 border rounded-lg p-2 flex items-center gap-2 flex-wrap text-xs">
+          <span className="font-bold text-gray-700">相手構成バイアス:</span>
+          {biasSummary.phys > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-red-100 text-red-700 border-red-300 font-bold">
+              🥊物理 ×{biasSummary.phys}
+            </span>
+          )}
+          {biasSummary.spec > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-blue-100 text-blue-700 border-blue-300 font-bold">
+              ✨特殊 ×{biasSummary.spec}
+            </span>
+          )}
+          {biasSummary.mixed > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-purple-100 text-purple-700 border-purple-300 font-bold">
+              ⚔️両刀 ×{biasSummary.mixed}
+            </span>
+          )}
+          {(() => {
+            const max = Math.max(biasSummary.phys, biasSummary.spec);
+            if (max >= 2 && biasSummary.phys !== biasSummary.spec) {
+              const hint = biasSummary.phys > biasSummary.spec
+                ? '→ 物理受けを残したい'
+                : '→ 特殊受けを残したい';
+              return <span className="text-gray-500 ml-1">{hint}</span>;
+            }
+            return null;
+          })()}
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-sm text-gray-600">相手パーティ ({filled}/6体)</div>
-        {filled > 0 && (
+        <div className="flex items-center gap-1.5">
           <button
-            onClick={handleClearAll}
-            className={`text-xs font-bold px-2.5 py-1 rounded border transition-colors ${
-              confirmClear
-                ? 'bg-red-600 text-white border-red-600 animate-pulse'
-                : 'bg-white text-red-600 border-red-300 hover:bg-red-50'
-            }`}
-            title="相手の6スロットをすべてクリア"
+            onClick={()=>setShowPhotoDetect(true)}
+            className="text-xs font-bold px-2.5 py-1 rounded border bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+            title="写真/スクショからAI検出"
           >
-            {confirmClear ? '⚠ もう一度タップで確定' : '🗑️ 相手を全クリア'}
+            📷 写真検出
           </button>
-        )}
+          {filled > 0 && (
+            <button
+              onClick={handleClearAll}
+              className={`text-xs font-bold px-2.5 py-1 rounded border transition-colors ${
+                confirmClear
+                  ? 'bg-red-600 text-white border-red-600 animate-pulse'
+                  : 'bg-white text-red-600 border-red-300 hover:bg-red-50'
+              }`}
+              title="相手の6スロットをすべてクリア"
+            >
+              {confirmClear ? '⚠ もう一度タップで確定' : '🗑️ 相手を全クリア'}
+            </button>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {[0,1,2,3,4,5].map(i => (
@@ -965,6 +1686,18 @@ function BattleView({opponents, setOpponents, userTeam}) {
       </div>
       {pickerIdx !== null && (
         <PokemonPicker onSelect={p=>setSlot(pickerIdx, p)} onClose={()=>setPickerIdx(null)} />
+      )}
+      {showPhotoDetect && (
+        <PhotoDetectModal
+          onApply={newSlots => {
+            // 既存のnullスロットは検出結果で埋め、検出結果がnullなら既存値を維持
+            const merged = opponents.map((cur, i) => newSlots[i] || cur || null);
+            // マッチした数が多い場合は全置換とみなす（5件以上検出された場合は完全置換）
+            const detectedCount = newSlots.filter(Boolean).length;
+            setOpponents(detectedCount >= 4 ? newSlots : merged);
+          }}
+          onClose={()=>setShowPhotoDetect(false)}
+        />
       )}
     </div>
   );
@@ -1054,13 +1787,26 @@ function App() {
   const lastUpdatedAtRef = useRef(null);
   const pushTimerRef = useRef(null);
 
+  // 旧アイテムIDのクリーンアップ（ポケチャン未実装アイテム削除）
+  const sanitizeTeams = (teams) => {
+    if (!Array.isArray(teams)) return teams;
+    return teams.map(t => ({
+      ...t,
+      slots: (t.slots || []).map(s => {
+        if (!s) return s;
+        if (s.item && !ITEM_MAP[s.item]) return {...s, item:''};
+        return s;
+      })
+    }));
+  };
+
   // 初回ロード: localStorage復元
   useEffect(() => {
     try {
       const rawV2 = localStorage.getItem('user_teams_v2');
       if (rawV2) {
         const d = JSON.parse(rawV2);
-        if (d.teams?.length) { setTeams(d.teams); setActiveIdx(d.activeIdx ?? 0); }
+        if (d.teams?.length) { setTeams(sanitizeTeams(d.teams)); setActiveIdx(d.activeIdx ?? 0); }
         if (d.opponents) setOpponents(d.opponents);
       } else {
         // 旧v1からマイグレーション
@@ -1115,7 +1861,7 @@ function App() {
           // 明示的接続：リモート優先で上書き
           skipNextPushRef.current = true;
           const d = remote.teams_json || {};
-          if (d.teams?.length) { setTeams(d.teams); setActiveIdx(d.activeIdx ?? 0); }
+          if (d.teams?.length) { setTeams(sanitizeTeams(d.teams)); setActiveIdx(d.activeIdx ?? 0); }
           if (d.opponents) setOpponents(d.opponents);
           setLastUpdatedAt(remote.updated_at);
         } else if (mode === 'auto') {
@@ -1203,7 +1949,7 @@ function App() {
           skipNextPushRef.current = true;
           const d = remote.teams_json || {};
           if (d.teams?.length) {
-            setTeams(d.teams);
+            setTeams(sanitizeTeams(d.teams));
             setActiveIdx(Math.min(d.activeIdx ?? 0, d.teams.length - 1));
           }
           if (d.opponents) setOpponents(d.opponents);
