@@ -254,11 +254,74 @@ const ITEMS = [
   { id:'ririba', jp:'リリバのみ',  emoji:'⚙️', short:'リリバ',group:'berry_resist', resist:'steel'    },
   { id:'rozel',  jp:'ロゼルのみ',  emoji:'🧚', short:'ロゼル', group:'berry_resist', resist:'fairy'    },
   { id:'hoz',    jp:'ホズのみ',    emoji:'🌰', short:'ホズ',   group:'berry_resist', resist:'normal'   },
+
+  // メガストーン（対応ポケモンがメガ進化可能に。種族値はROSTERのメガ形態を選択することで反映）
+  { id:'mega_venusaur',      jp:'フシギバナイト',        emoji:'💎', short:'フシギバナ', group:'mega', megaTarget:'メガフシギバナ' },
+  { id:'mega_charizard_x',   jp:'リザードナイトX',       emoji:'💎', short:'リザードX',  group:'mega', megaTarget:'メガリザードンX' },
+  { id:'mega_charizard_y',   jp:'リザードナイトY',       emoji:'💎', short:'リザードY',  group:'mega', megaTarget:'メガリザードンY' },
+  { id:'mega_blastoise',     jp:'カメックスナイト',      emoji:'💎', short:'カメックス', group:'mega', megaTarget:'メガカメックス' },
+  { id:'mega_beedrill',      jp:'スピアナイト',          emoji:'💎', short:'スピアー',   group:'mega', megaTarget:'メガスピアー' },
+  { id:'mega_pidgeot',       jp:'ピジョットナイト',      emoji:'💎', short:'ピジョット', group:'mega', megaTarget:'メガピジョット' },
+  { id:'mega_alakazam',      jp:'フーディナイト',        emoji:'💎', short:'フーディン', group:'mega', megaTarget:'メガフーディン' },
+  { id:'mega_slowbro',       jp:'ヤドランナイト',        emoji:'💎', short:'ヤドラン',   group:'mega', megaTarget:'メガヤドラン' },
+  { id:'mega_gengar',        jp:'ゲンガナイト',          emoji:'💎', short:'ゲンガー',   group:'mega', megaTarget:'メガゲンガー' },
+  { id:'mega_kangaskhan',    jp:'ガルーラナイト',        emoji:'💎', short:'ガルーラ',   group:'mega', megaTarget:'メガガルーラ' },
+  { id:'mega_pinsir',        jp:'カイロスナイト',        emoji:'💎', short:'カイロス',   group:'mega', megaTarget:'メガカイロス' },
+  { id:'mega_gyarados',      jp:'ギャラドスナイト',      emoji:'💎', short:'ギャラドス', group:'mega', megaTarget:'メガギャラドス' },
+  { id:'mega_aerodactyl',    jp:'プテラナイト',          emoji:'💎', short:'プテラ',     group:'mega', megaTarget:'メガプテラ' },
+  { id:'mega_clefable',      jp:'ピクシーナイト',        emoji:'💎', short:'ピクシー',   group:'mega', megaTarget:'メガピクシー' },
+  { id:'mega_dragonite',     jp:'カイリューナイト',      emoji:'💎', short:'カイリュー', group:'mega', megaTarget:'メガカイリュー' },
+  { id:'mega_meganium',      jp:'メガニウムナイト',      emoji:'💎', short:'メガニウム', group:'mega', megaTarget:'メガメガニウム' },
+  { id:'mega_victreebel',    jp:'ウツボットナイト',      emoji:'💎', short:'ウツボット', group:'mega', megaTarget:'メガウツボット' },
+  { id:'mega_feraligatr',    jp:'オーダイルナイト',      emoji:'💎', short:'オーダイル', group:'mega', megaTarget:'メガオーダイル' },
+  { id:'mega_ampharos',      jp:'デンリュウナイト',      emoji:'💎', short:'デンリュウ', group:'mega', megaTarget:'メガデンリュウ' },
+  { id:'mega_steelix',       jp:'ハガネールナイト',      emoji:'💎', short:'ハガネール', group:'mega', megaTarget:'メガハガネール' },
+  { id:'mega_scizor',        jp:'ハッサムナイト',        emoji:'💎', short:'ハッサム',   group:'mega', megaTarget:'メガハッサム' },
+  { id:'mega_heracross',     jp:'ヘラクロスナイト',      emoji:'💎', short:'ヘラクロス', group:'mega', megaTarget:'メガヘラクロス' },
+  { id:'mega_houndoom',      jp:'ヘルガナイト',          emoji:'💎', short:'ヘルガー',   group:'mega', megaTarget:'メガヘルガー' },
+  { id:'mega_tyranitar',     jp:'バンギラスナイト',      emoji:'💎', short:'バンギラス', group:'mega', megaTarget:'メガバンギラス' },
+  { id:'mega_chimecho',      jp:'チリーンナイト',        emoji:'💎', short:'チリーン',   group:'mega', megaTarget:'メガチリーン' },
+  { id:'mega_sceptile_emb',  jp:'エンブオーナイト',      emoji:'💎', short:'エンブオー', group:'mega', megaTarget:'メガエンブオー' },
+  { id:'mega_blaziken_sco',  jp:'スコヴィランナイト',    emoji:'💎', short:'スコヴィラン',group:'mega', megaTarget:'メガスコヴィラン' },
+  { id:'mega_sharpedo',      jp:'サメハダナイト',        emoji:'💎', short:'サメハダー', group:'mega', megaTarget:'メガサメハダー' },
+  { id:'mega_camerupt',      jp:'バクーダナイト',        emoji:'💎', short:'バクーダ',   group:'mega', megaTarget:'メガバクーダ' },
+  { id:'mega_altaria',       jp:'チルタリスナイト',      emoji:'💎', short:'チルタリス', group:'mega', megaTarget:'メガチルタリス' },
+  { id:'mega_medicham',      jp:'チャーレムナイト',      emoji:'💎', short:'チャーレム', group:'mega', megaTarget:'メガチャーレム' },
+  { id:'mega_manectric',     jp:'ライボルトナイト',      emoji:'💎', short:'ライボルト', group:'mega', megaTarget:'メガライボルト' },
+  { id:'mega_banette',       jp:'ジュペッタナイト',      emoji:'💎', short:'ジュペッタ', group:'mega', megaTarget:'メガジュペッタ' },
+  { id:'mega_absol',         jp:'アブソルナイト',        emoji:'💎', short:'アブソル',   group:'mega', megaTarget:'メガアブソル' },
+  { id:'mega_glalie',        jp:'オニゴーリナイト',      emoji:'💎', short:'オニゴーリ', group:'mega', megaTarget:'メガオニゴーリ' },
+  { id:'mega_froslass',      jp:'ユキメノコナイト',      emoji:'💎', short:'ユキメノコ', group:'mega', megaTarget:'メガユキメノコ' },
+  { id:'mega_abomasnow',     jp:'ユキノオーナイト',      emoji:'💎', short:'ユキノオー', group:'mega', megaTarget:'メガユキノオー' },
+  { id:'mega_drampa',        jp:'ジジーロンナイト',      emoji:'💎', short:'ジジーロン', group:'mega', megaTarget:'メガジジーロン' },
+  { id:'mega_garchomp',      jp:'ガブリアスナイト',      emoji:'💎', short:'ガブリアス', group:'mega', megaTarget:'メガガブリアス' },
+  { id:'mega_lucario',       jp:'ルカリオナイト',        emoji:'💎', short:'ルカリオ',   group:'mega', megaTarget:'メガルカリオ' },
+  { id:'mega_skarmory',      jp:'エアームドナイト',      emoji:'💎', short:'エアームド', group:'mega', megaTarget:'メガエアームド' },
+  { id:'mega_excadrill',     jp:'ドリュウズナイト',      emoji:'💎', short:'ドリュウズ', group:'mega', megaTarget:'メガドリュウズ' },
+  { id:'mega_audino',        jp:'タブンネナイト',        emoji:'💎', short:'タブンネ',   group:'mega', megaTarget:'メガタブンネ' },
+  { id:'mega_golurk',        jp:'ゴルーグナイト',        emoji:'💎', short:'ゴルーグ',   group:'mega', megaTarget:'メガゴルーグ' },
+  { id:'mega_chandelure',    jp:'シャンデラナイト',      emoji:'💎', short:'シャンデラ', group:'mega', megaTarget:'メガシャンデラ' },
+  { id:'mega_starmie',       jp:'スターミーナイト',      emoji:'💎', short:'スターミー', group:'mega', megaTarget:'メガスターミー' },
+  { id:'mega_crabominable',  jp:'ケケンカニナイト',      emoji:'💎', short:'ケケンカニ', group:'mega', megaTarget:'メガケケンカニ' },
+  { id:'mega_gardevoir',     jp:'サーナイトナイト',      emoji:'💎', short:'サーナイト', group:'mega', megaTarget:'メガサーナイト' },
+  { id:'mega_gallade',       jp:'エルレイドナイト',      emoji:'💎', short:'エルレイド', group:'mega', megaTarget:'メガエルレイド' },
+  { id:'mega_sableye',       jp:'ヤミラミナイト',        emoji:'💎', short:'ヤミラミ',   group:'mega', megaTarget:'メガヤミラミ' },
+  { id:'mega_aggron',        jp:'ボスゴドラナイト',      emoji:'💎', short:'ボスゴドラ', group:'mega', megaTarget:'メガボスゴドラ' },
+  { id:'mega_lopunny',       jp:'ミミロップナイト',      emoji:'💎', short:'ミミロップ', group:'mega', megaTarget:'メガミミロップ' },
+  { id:'mega_chesnaught',    jp:'ブリガロナイト',        emoji:'💎', short:'ブリガロン', group:'mega', megaTarget:'メガブリガロン' },
+  { id:'mega_delphox',       jp:'マフォクシーナイト',    emoji:'💎', short:'マフォクシー',group:'mega', megaTarget:'メガマフォクシー' },
+  { id:'mega_greninja',      jp:'ゲッコウガナイト',      emoji:'💎', short:'ゲッコウガ', group:'mega', megaTarget:'メガゲッコウガ' },
+  { id:'mega_hawlucha',      jp:'ルチャブルナイト',      emoji:'💎', short:'ルチャブル', group:'mega', megaTarget:'メガルチャブル' },
+  { id:'mega_meowstic_m',    jp:'ニャオニクスナイト(オス)',emoji:'💎', short:'ニャオ(♂)',group:'mega', megaTarget:'メガニャオニクス(オス)' },
+  { id:'mega_meowstic_f',    jp:'ニャオニクスナイト(メス)',emoji:'💎', short:'ニャオ(♀)',group:'mega', megaTarget:'メガニャオニクス(メス)' },
+  { id:'mega_floette',       jp:'フラエッテナイト',      emoji:'💎', short:'フラエッテ', group:'mega', megaTarget:'メガフラエッテ(えいえんのはな)' },
+  { id:'mega_glimmora',      jp:'キラフロルナイト',      emoji:'💎', short:'キラフロル', group:'mega', megaTarget:'メガキラフロル' },
 ];
 const ITEM_MAP = Object.fromEntries(ITEMS.map(it => [it.id, it]));
 
 // 持ち物のセレクタ用グループ定義
 const ITEM_GROUPS = [
+  { key:'mega',         label:'◆ メガストーン' },
   { key:'choice',       label:'◆ こだわり' },
   { key:'type',         label:'◆ タイプ強化 ×1.2' },
   { key:'exclusive',    label:'◆ 専用アイテム' },
@@ -378,7 +441,9 @@ async function detectPokemonFromImage(apiKey, base64, mime) {
   const rosterList = ROSTER.map(r => r.jp).join('／');
   const prompt = `この画像は「ポケモンチャンピオンズ」というゲームの対戦選出画面です。画像に映っている敵ポケモン最大6体の名前を、画面の表示順に、日本語で正確に列挙してください。
 
-ルール:
+重要ルール:
+- **色違い（シャイニー）ポケモンの扱い**: 色違いは体色・配色だけが異なり、シルエット・体型・模様の構造は通常色と完全に同一です。色味で判断せず、必ず「シルエット・体型・体格・パーツ構成・各種イラストの輪郭」で種族を特定してください。例: 金色のギャラドス＝通常のギャラドス、緑色のリザードン＝通常のリザードン、ピンクのガブリアス＝通常のガブリアス と判定すること。
+- タイプアイコン（炎/水/くさ/でんき/エスパー等）がアイコン横に表示されていたら、それを種族特定のヒントとして使ってください（例: 黒い丸型＋ゴースト/どく → ゲンガー）。
 - メガ進化は「メガXXX」、アローラのすがたは「アローラXXX」、ガラルは「ガラルXXX」、ヒスイは「ヒスイXXX」、パルデアは「パルデアXXX」と表記してください。
 - ロトムのフォルム（ヒート/ウォッシュ/フロスト/スピン/カット）やポワルン（たいよう/あまみず/ゆきぐも）など、フォルムチェンジがある場合は該当フォルム名を含めてください。
 - 以下は「ポケモンチャンピオンズ」参戦リストです。出力はこのリストの表記に合わせてください（完全一致）:
@@ -1323,7 +1388,11 @@ function PhotoDetectModal({onApply, onClose}) {
   const [rawNames, setRawNames] = useState([]);
   const [slots, setSlots] = useState([null,null,null,null,null,null]);
   const [overrideIdx, setOverrideIdx] = useState(null);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraError, setCameraError] = useState('');
   const fileInputRef = useRef(null);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
 
   // 初回: localStorage からAPIキー読み込み
   useEffect(() => {
@@ -1338,6 +1407,74 @@ function PhotoDetectModal({onApply, onClose}) {
   useEffect(() => {
     return () => { if (previewUrl) URL.revokeObjectURL(previewUrl); };
   }, [previewUrl]);
+
+  // カメラストリームのクリーンアップ（アンマウント時）
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  // カメラ起動後、video要素にストリームをバインド
+  useEffect(() => {
+    if (cameraOn && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(()=>{});
+    }
+  }, [cameraOn]);
+
+  const startCamera = async () => {
+    setCameraError('');
+    setError('');
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError('このブラウザはカメラAPIに未対応です。「ファイルを選択」からギャラリー経由でアップしてください。');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOn(true);
+    } catch(err) {
+      setCameraError(err.message || 'カメラを起動できません（権限を確認してください）');
+    }
+  };
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOn(false);
+  };
+  const handleCapture = async () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('キャプチャ失敗')), 'image/jpeg', 0.9);
+      });
+      const capturedFile = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
+      stopCamera();
+      setError('');
+      setRawNames([]);
+      setSlots([null,null,null,null,null,null]);
+      const resized = await resizeImageForApi(capturedFile, 1280);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(resized));
+      setFile(resized);
+    } catch(err) {
+      setError(err.message || 'キャプチャに失敗しました');
+    }
+  };
 
   const handleSaveKey = () => {
     const k = keyDraft.trim();
@@ -1465,11 +1602,19 @@ function PhotoDetectModal({onApply, onClose}) {
           <div className="border rounded-lg p-2.5 space-y-2">
             <div className="text-xs font-bold text-gray-700">選出画面のスクショ / 写真</div>
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={startCamera}
+                className="text-xs font-bold px-2.5 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                title="ガイド枠付きでカメラ起動"
+              >
+                📷 カメラ起動（ガイド付き）
+              </button>
+              <span className="text-[11px] text-gray-400">または</span>
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 onChange={handleFileChange}
                 className="text-xs"
               />
@@ -1479,6 +1624,11 @@ function PhotoDetectModal({onApply, onClose}) {
                 </span>
               )}
             </div>
+            {cameraError && (
+              <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                {cameraError}
+              </div>
+            )}
             {previewUrl && (
               <div className="mt-1">
                 <img src={previewUrl} alt="プレビュー" className="max-h-48 rounded border" />
@@ -1567,6 +1717,74 @@ function PhotoDetectModal({onApply, onClose}) {
             onSelect={p => handleSlotChange(overrideIdx, p)}
             onClose={() => setOverrideIdx(null)}
           />
+        )}
+
+        {cameraOn && (
+          <div className="fixed inset-0 bg-black z-[60] flex flex-col" onClick={e=>e.stopPropagation()}>
+            {/* ビデオフィード（全画面） */}
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              autoPlay
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+
+            {/* ガイド枠オーバーレイ: 中央の縦長枠が明るく、外側が暗く */}
+            <div className="absolute inset-0 pointer-events-none">
+              {/* 上 */}
+              <div className="absolute left-0 right-0 top-0 bg-black/60" style={{height:'7%'}} />
+              {/* 下 */}
+              <div className="absolute left-0 right-0 bottom-0 bg-black/60" style={{height:'18%'}} />
+              {/* 左 */}
+              <div className="absolute bg-black/60" style={{left:0, top:'7%', bottom:'18%', width:'28%'}} />
+              {/* 右 */}
+              <div className="absolute bg-black/60" style={{right:0, top:'7%', bottom:'18%', width:'28%'}} />
+              {/* ガイド枠線 */}
+              <div
+                className="absolute border-2 border-emerald-400 rounded"
+                style={{left:'28%', right:'28%', top:'7%', bottom:'18%', boxShadow:'0 0 0 1px rgba(0,0,0,0.5)'}}
+              >
+                {/* 四隅のL字マーカー */}
+                <div className="absolute top-0 left-0 w-5 h-5 border-t-4 border-l-4 border-emerald-300" />
+                <div className="absolute top-0 right-0 w-5 h-5 border-t-4 border-r-4 border-emerald-300" />
+                <div className="absolute bottom-0 left-0 w-5 h-5 border-b-4 border-l-4 border-emerald-300" />
+                <div className="absolute bottom-0 right-0 w-5 h-5 border-b-4 border-r-4 border-emerald-300" />
+                {/* 6スロットの仕切りガイド（縦に6等分） */}
+                {[1,2,3,4,5].map(i => (
+                  <div key={i}
+                    className="absolute left-2 right-2 border-t border-dashed border-emerald-300/40"
+                    style={{top:`${(i/6)*100}%`}}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* 上部: ヒント */}
+            <div className="relative z-10 px-3 pt-3 pointer-events-none">
+              <div className="bg-black/70 text-white text-xs rounded px-2 py-1 inline-block">
+                🎯 緑の枠内に「敵の6体縦リスト」を収めて撮影
+              </div>
+            </div>
+
+            {/* 下部: ボタン群 */}
+            <div className="absolute left-0 right-0 bottom-0 p-4 flex items-center justify-between gap-3">
+              <button
+                onClick={stopCamera}
+                className="px-4 py-2 rounded-full bg-white/90 text-gray-800 text-sm font-bold shadow"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleCapture}
+                className="w-16 h-16 rounded-full bg-white border-4 border-emerald-400 shadow-lg active:scale-95 transition-transform flex items-center justify-center"
+                title="撮影"
+              >
+                <div className="w-12 h-12 rounded-full bg-emerald-500" />
+              </button>
+              <div className="w-[92px]" />
+            </div>
+          </div>
         )}
       </div>
     </div>
