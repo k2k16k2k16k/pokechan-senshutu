@@ -78,7 +78,7 @@ function allWeaknesses(defTypes) {
 // 形式: score = 倍率 × 一致 × 攻AC × 防BD × 威力 × 持ち物 × 4倍非線形
 // 返却: スコアの他、内訳と最適技、想定ダメージ% (期待値の粗見積り)
 function bestHitScore(userPoke, opp) {
-  const blank = {score:0, mult:0, stab:false, mv:null, offF:1, defF:1, powF:1, itemF:1, bonus:1, priority:0, dmgPct:0};
+  const blank = {score:0, mult:0, stab:false, mv:null, offF:1, defF:1, powF:1, itemF:1, bonus:1, accF:1, priority:0, dmgPct:0, bpSrc:'default'};
   if (!userPoke || !opp) return blank;
   let best = blank;
   for (const mv of (userPoke.moves || [])) {
@@ -91,13 +91,15 @@ function bestHitScore(userPoke, opp) {
     const powF = powerFactor(mv);
     const itemF = itemFactor(userPoke, mv);
     const bonus = multNonLinearBonus(mult);
-    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus;
+    const accF = accuracyFactor(mv);
+    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus * accF;
     const priority = movePriority(mv);
-    // 相手HPに対する期待ダメージ% (粗見積り: スコア × 33 ≈ HP100基準の%)
+    const bpSrc = bpSource(mv);
+    // 相手HPに対する期待ダメージ%（粗見積り）
     const oppStats = getPokeStatsObj(opp.id);
     const hpBase = oppStats?.hp || 80;
     const dmgPct = Math.min(200, Math.round(score * 3300 / hpBase));
-    if (score > best.score) best = {score, mult, stab, mv, offF, defF, powF, itemF, bonus, priority, dmgPct};
+    if (score > best.score) best = {score, mult, stab, mv, offF, defF, powF, itemF, bonus, accF, priority, dmgPct, bpSrc};
   }
   return best;
 }
@@ -433,63 +435,169 @@ const MOVE_BP = {
   'ばかぢから':120,'おいうち':40,'しぜんのちから':0,'のろい':0,'かげぶんしん':0,'まもる':0,'みがわり':0,
   'しんぴのまもり':0,'ちょうはつ':0,'じこさいせい':0,'タマゴうみ':0,'ねむる':0,'つるぎのまい':0,
   'てっぺき':0,'わるだくみ':0,'めいそう':0,'りゅうのまい':0,'ちょうのまい':0,'コットンガード':0,
+  'トライアタック':80,'スピードスター':60,'すてみ':120,'すりつぶす':90,'ひるみうち':0,
+  'あばれる':120,'とっしん':90,'でんこうせっかる':40,'すなかけ':0,'バトンタッチ':0,
+  'みだれひっかき':18,'おうふくビンタ':15,'ダブルアタック':35,'にどげり':30,
+  'ドわすれ':0,'ほえる':0,'なきごえ':0,'しっぽをふる':0,'いやなおと':0,'こえまね':0,
+  'ばくおんぱ':140,'なにかいう':0,'スピードスター':60,
+  'テラバースト':80,
   // --- 炎 ---
   'ひのこ':40,'かえんほうしゃ':90,'だいもんじ':110,'オーバーヒート':130,'フレアドライブ':120,
   'かえんぐるま':60,'ねっぷう':95,'ブレイズキック':85,'フレアソング':80,'もえつきる':130,
   'せいなるほのお':100,'ほのおのパンチ':75,'ほのおのキバ':65,'ふんえん':50,'オーバードライブ':80,
+  'あおいほのお':130,'マグマストーム':100,'ほのおのうず':35,'ほのおのまい':80,'にほんばれ':0,
+  'もえるいかり':0,'バーニングジェラシー':70,'いばる':0,
   // --- 水 ---
   'みずでっぽう':40,'なみのり':90,'ハイドロポンプ':110,'たきのぼり':80,'アクアジェット':40,
   'アクアテール':90,'アクアブレイク':85,'ねっとう':80,'こうそくスピン':50,'シェルブレード':75,
   'ダイビング':80,'ハイドロカノン':150,'みずのはどう':60,'ダークホール':0,
+  'あめごい':0,'うずしお':35,'うちけす':0,'ミストボール':70,'こんげんのはどう':110,
+  'アクアリング':0,'ダイビング':80,'ほたるび':0,'ウォーターシュリケン':15,
   // --- 電気 ---
   'でんきショック':40,'10まんボルト':90,'かみなり':110,'かみなりパンチ':75,'スパーク':65,
   'でんじほう':120,'ほうでん':80,'ボルテッカー':120,'ワイルドボルト':90,'エレキボール':0,
   'ライジングボルト':70,'でんじは':0,'プラズマシャワー':0,
+  'ボルトチェンジ':70,'かみなりのキバ':65,'プラズマフィスト':100,'でんげきは':60,
+  'じゅうでん':0,'エレキフィールド':0,'エレキネット':55,'アイアンテール':100,
+  'らいげき':120,'クロスサンダー':100,
   // --- 草 ---
   'つるのムチ':45,'はっぱカッター':55,'ソーラービーム':120,'リーフブレード':90,'ウッドハンマー':120,
   'タネばくだん':80,'やどりぎのタネ':0,'ねむりごな':0,'しびれごな':0,'キノコのほうし':0,
   'リーフストーム':130,'エナジーボール':90,'タネマシンガン':25,'くさむすび':0,'パワーウィップ':120,
+  'マジカルリーフ':60,'ギガドレイン':75,'しびれごな':0,'はなふぶき':90,'グラスフィールド':0,
+  'グラススライダー':70,'はっぱマシンガン':25,'フラワーガード':0,
   // --- こおり ---
   'こおりのつぶて':40,'れいとうビーム':90,'ふぶき':110,'つららばり':25,'フリーズドライ':70,
   'こごえるかぜ':55,'つららおとし':85,'こおりのキバ':65,'ぜったいれいど':0,'オーロラビーム':65,
+  'アイススピナー':80,'あられ':0,'クリスタルフラッシュ':70,'フロストエフェクト':0,
   // --- 格闘 ---
   'からてチョップ':50,'マッハパンチ':40,'かわらわり':75,'インファイト':120,'きあいパンチ':150,
   'しんくうは':40,'スカイアッパー':85,'アームハンマー':100,'きあいだま':120,'かみくだく':80,
   'はっけい':60,'ばくれつけん':100,'ドレインパンチ':75,'ローキック':65,
+  'とびげり':100,'とびひざげり':130,'クロスチョップ':100,'グロウパンチ':40,'あてみなげ':70,
+  'コメットパンチ':90,'インファイト':120,'せいけん':100,'きょくてんリバース':100,
   // --- 毒 ---
   'どくづき':80,'ダストシュート':120,'ヘドロ爆弾':90,'ヘドロウェーブ':95,'どくどく':0,
   'クロスポイズン':70,'ベノムショック':65,'どくびし':0,'なげつける':0,
+  'どくどくのキバ':50,'どくガス':0,'ヘドロこうげき':65,'ヘドロこうか':0,'ベノムトラップ':0,
   // --- 地面 ---
   'じしん':100,'じならし':60,'あなをほる':80,'じわれ':0,'じゃれつく':0,'マッドショット':55,
   'ドラゴンアロー':50,'じめんのはどう':60,'10まんばりき':95,
+  'だいちのちから':90,'すなじごく':35,'どろばくだん':65,'どろかけ':20,'すなあらし':0,
   // --- 飛行 ---
   'つばさでうつ':60,'エアカッター':60,'エアスラッシュ':75,'ぼうふう':110,'ゴッドバード':140,
   'ブレイブバード':120,'アクロバット':55,'ドリルくちばし':80,'ふきとばし':0,'おいかぜ':0,
+  'つばめがえし':60,'エアロブラスト':100,'ハリケーン':110,'はがねのつばさ':70,'かっくうきゃく':100,
+  'ミラーハーブ':0,'ふきとばし':0,
   // --- エスパー ---
   'ねんりき':50,'サイケこうせん':65,'サイコキネシス':90,'サイコブースト':140,'サイコカッター':70,
   'ゼンのちから':90,'シンクロノイズ':120,'サイコファング':85,'リフレクター':0,'ひかりのかべ':0,
   'めいそう':0,'トリックルーム':0,'ワンダールーム':0,'マジックルーム':0,'ねこのて':0,
+  'サイコブレイク':100,'サイコショック':80,'サイコウェーブ':0,'ゆめくい':100,'みらいよち':120,
+  'サイコブースター':140,'テレキネシス':0,'サイコフィールド':0,
   // --- 虫 ---
   'むしのさざめき':90,'シグナルビーム':75,'むしくい':60,'とんぼがえり':70,'メガホーン':120,
   'きゅうけつ':80,'ぎんいろのかぜ':60,'こうそくいどう':0,
+  'シザークロス':80,'むしのしらせ':0,'ほっぺすりすり':20,'スレッドトラップ':0,'ぎんいろのちから':60,
+  'パワーホイップ':120,
   // --- 岩 ---
   'いわおとし':50,'いわくだき':40,'ストーンエッジ':100,'げんしのちから':60,'パワージェム':80,
   'ロックブラスト':25,'ロッククライム':90,'ステルスロック':0,
+  'いわなだれ':75,'がんせきふうじ':60,'うちおとす':50,'ロックカット':0,'アクセルロック':40,
   // --- ゴースト ---
   'したでなめる':30,'ナイトヘッド':0,'シャドーボール':80,'シャドークロー':70,'シャドーパンチ':60,
   'のろい':0,'おどろかす':30,'たたりめ':65,'ファントムフォース':90,'かげうち':40,
+  'シャドーダイブ':95,'ミラーショット':65,'ポルターガイスト':110,
   // --- ドラゴン ---
   'りゅうのいぶき':60,'りゅうせいぐん':130,'ドラゴンクロー':80,'げきりん':120,'ドラゴンテール':60,
   'アイアンテール':100,'ドラゴンダイブ':100,'りゅうのはどう':85,'ダブルチョップ':40,
+  'アウトレイジ':120,'りゅうのいかり':0,'ソウルブレイク':100,
   // --- 悪 ---
   'かみつく':60,'かみくだく':80,'あくのはどう':80,'イカサマ':95,'ふいうち':70,'ちょうはつ':0,
   'つじぎり':70,'バッドネットワーク':85,'まとわりつく':20,'おいうち':40,
+  'だましうち':60,'オーバードライブ':80,'ナイトバースト':85,'しっぺがえし':50,
   // --- 鋼 ---
   'メタルクロー':50,'アイアンヘッド':80,'てっぺき':0,'ラスターカノン':80,'バレットパンチ':40,
   'ジャイロボール':0,'スマートホーン':70,'メタルバースト':0,
+  'はがねのつばさ':70,
   // --- フェアリー ---
   'ようせいのかぜ':40,'ドレインキッス':50,'ムーンフォース':95,'じゃれつく':90,'つきのひかり':0,
   'マジカルシャイン':80,'スピリットブレイク':75,
+  'メテオシャワー':120,
+};
+
+// 命中率（未登録は 100 扱い、0 は変化技のため無効化扱い）
+const MOVE_ACCURACY = {
+  'かみなり':70,'ふぶき':70,'ハイドロポンプ':80,'だいもんじ':85,'ぼうふう':70,
+  'とびひざげり':90,'とびげり':95,'きあいだま':70,'ばくれつパンチ':50,
+  'ストーンエッジ':80,'いわなだれ':90,'メガホーン':85,
+  'ドリルくちばし':100,'ドリルライナー':95,'マグマストーム':75,
+  'じわれ':30,'ツノドリル':30,'ハサミギロチン':30,'ぜったいれいど':20,
+  'ダストシュート':80,'クロスチョップ':80,'ゴッドバード':90,'あおほのお':85,
+  'ダイナミックフルパワー':100,'きあいパンチ':100,'はかいこうせん':90,'ギガインパクト':90,
+  'アームハンマー':90,'メテオドライブ':100,'きゅうけつ':100,
+  'オーバードライブ':100,'ほのおのうず':85,'すなじごく':85,'うずしお':85,
+};
+
+// 特殊な挙動を持つ技（固定ダメージ/多段/変動/カウンター/OHKO 等）
+// kind:
+//   'fixed'       → 固定ダメージ（damage: 絶対値）
+//   'fraction'    → 相手HPの割合ダメージ（pct: 百分率）
+//   'multi'       → 連続技（bp: 1ヒット威力、avgHits: 平均ヒット数）
+//   'multi_progressive' → 威力漸増型（bps: [威力配列]、avgHits: 平均ヒット数）
+//   'conditional' → 条件で威力変動（baseBp/altBp: 条件成立時の威力、avgBp: 中央値）
+//   'variable_weight' → 重さ/素早さで威力変動（avg: 期待威力）
+//   'counter'     → 相手の攻撃依存（保守的 factor=0.5）
+//   'ohko'        → 一撃必殺（accuracy: 命中率）
+//   'priority_reactive' → 条件付き先制（相手の攻撃手にのみ）
+const MOVE_SPECIAL = {
+  // 固定ダメ
+  'ちきゅうなげ':  {kind:'fixed', damage:50},
+  'ナイトヘッド':  {kind:'fixed', damage:50},
+  'ソニックブーム': {kind:'fixed', damage:20},
+  'りゅうのいかり': {kind:'fixed', damage:40},
+  'サイコウェーブ': {kind:'fixed', damage:50},
+  // 割合ダメ
+  'しぜんのいかり': {kind:'fraction', pct:50},
+  'いのちがけ':    {kind:'fraction', pct:100},
+  'ひっさつまえば': {kind:'fraction', pct:50},
+  // 多段
+  'タネマシンガン': {kind:'multi', bp:25, avgHits:3.17},
+  'ロックブラスト': {kind:'multi', bp:25, avgHits:3.17},
+  'スイープビンタ': {kind:'multi', bp:25, avgHits:3.17},
+  'つららばり':    {kind:'multi', bp:25, avgHits:3.17},
+  'ウォーターシュリケン': {kind:'multi', bp:15, avgHits:3.17},
+  'みだれひっかき': {kind:'multi', bp:18, avgHits:3.17},
+  'はっぱマシンガン': {kind:'multi', bp:25, avgHits:3.17},
+  'おうふくビンタ': {kind:'multi', bp:15, avgHits:3.17},
+  'スキルスワップ': null,
+  'にどげり':      {kind:'multi', bp:30, avgHits:2},
+  'ダブルアタック': {kind:'multi', bp:35, avgHits:2},
+  'ダブルチョップ': {kind:'multi', bp:40, avgHits:2},
+  'ドラゴンアロー': {kind:'multi', bp:50, avgHits:2},
+  'トリプルアクセル': {kind:'multi_progressive', bps:[20,40,60], avgHits:2.5},
+  'ウォーターテール': {kind:'multi', bp:30, avgHits:2},
+  // 条件変動
+  'アクロバット':  {kind:'conditional', baseBp:55, altBp:110, avgBp:82},
+  'テラバースト':  {kind:'conditional', baseBp:80, altBp:80, avgBp:80},
+  'けたぐり':     {kind:'variable_weight', avg:60},
+  'ヘビーボンバー': {kind:'variable_weight', avg:90},
+  'くさむすび':   {kind:'variable_weight', avg:60},
+  'ひくいどり':   {kind:'variable_weight', avg:70},
+  'エレキボール': {kind:'variable_weight', avg:70},
+  'ジャイロボール': {kind:'variable_weight', avg:70},
+  // カウンター
+  'カウンター':    {kind:'counter'},
+  'ミラーコート':  {kind:'counter'},
+  'メタルバースト': {kind:'counter'},
+  // 一撃必殺
+  'じわれ':        {kind:'ohko', accuracy:30},
+  'ツノドリル':    {kind:'ohko', accuracy:30},
+  'ハサミギロチン': {kind:'ohko', accuracy:30},
+  'ぜったいれいど': {kind:'ohko', accuracy:20},
+  // 条件付き先制
+  'ふいうち':      {kind:'priority_reactive', baseBp:70},
+  'みねうち':      {kind:'fixed_max_leave1', baseBp:40},
 };
 
 // 優先度のある技だけ記載（未登録は0扱い）
@@ -530,16 +638,100 @@ function defensiveFactor(opp, mv) {
   return Math.max(0.55, Math.min(1.6, 100 / Math.max(40, defStat)));
 }
 
-// 技の威力補正（登録されていれば利用、無ければカテゴリ別のデフォルト）
+// 威力の出所を返す（UI バッジ判定用）
+// 'user'     ユーザー入力
+// 'special'  特殊挙動（MOVE_SPECIAL）
+// 'dict'     辞書ヒット（MOVE_BP）
+// 'default'  デフォルト（90相当）で代入された＝精度低い
+// 'status'   変化技（威力計算対象外）
+function bpSource(mv) {
+  if (!mv) return 'default';
+  if (mv.cat === '変') return 'status';
+  if (mv.bp != null && mv.bp > 0) return 'user';
+  if (MOVE_SPECIAL[mv.name]) return 'special';
+  if (MOVE_BP[mv.name] != null) return 'dict';
+  return 'default';
+}
+
+// 技の威力補正（特殊技→辞書→デフォルト）
+// 期待ダメージを威力90基準に正規化して返す (0.25〜2.0)
 function powerFactor(mv) {
   if (!mv || mv.cat === '変') return 0.3;
+  // 特殊技処理（固定ダメ/多段/割合/変動/カウンター/OHKO）
+  const sp = MOVE_SPECIAL[mv.name];
+  if (sp) {
+    switch (sp.kind) {
+      case 'fixed': {
+        // 固定ダメージ: level相当の絶対値 → 威力換算
+        // （だいたい 40相当≒威力60換算）
+        return Math.max(0.2, Math.min(1.2, (sp.damage * 1.2) / 90));
+      }
+      case 'fraction': {
+        // 割合ダメ: pct=50 → HP半分 ≒ 威力80相当くらい
+        return Math.max(0.25, Math.min(1.5, (sp.pct * 1.4) / 90));
+      }
+      case 'multi': {
+        const totalBp = sp.bp * (sp.avgHits || 3);
+        return Math.max(0.25, Math.min(2.0, totalBp / 90));
+      }
+      case 'multi_progressive': {
+        // 威力漸増: 平均ヒット数に応じた期待合計威力
+        const avgH = sp.avgHits || 2.5;
+        const bps = sp.bps || [];
+        let total = 0;
+        for (let i = 0; i < bps.length; i++) {
+          // i+1 ヒット目の発生確率（累積）
+          const prob = Math.max(0, Math.min(1, avgH - i));
+          total += bps[i] * prob;
+        }
+        return Math.max(0.25, Math.min(2.0, total / 90));
+      }
+      case 'conditional': {
+        // 条件充足時の平均威力で見積もる
+        const avg = sp.avgBp ?? ((sp.baseBp + sp.altBp) / 2);
+        return Math.max(0.25, Math.min(1.8, avg / 90));
+      }
+      case 'variable_weight': {
+        return Math.max(0.25, Math.min(1.5, sp.avg / 90));
+      }
+      case 'counter': {
+        // 相手依存のため中庸値（過大評価を避ける）
+        return 0.5;
+      }
+      case 'ohko': {
+        // 一撃必殺: 期待ダメ = HP × 命中率 → 威力換算で大きめだが成功率で減衰
+        // 成功率30%なら実効ダメ30% → 威力30相当、保守的に評価
+        return Math.max(0.15, Math.min(1.2, (sp.accuracy || 30) / 90 * 1.5));
+      }
+      case 'priority_reactive': {
+        // ふいうち: 相手の攻撃手選択に依存、平均的に成立仮定で 70*0.8
+        return Math.max(0.25, Math.min(1.5, (sp.baseBp || 70) * 0.8 / 90));
+      }
+      case 'fixed_max_leave1': {
+        // みねうち: HP1まで。実質固定小ダメ評価
+        return 0.45;
+      }
+    }
+  }
   const bp = (mv.bp != null && mv.bp > 0) ? mv.bp : (MOVE_BP[mv.name] ?? null);
   if (bp == null) {
     // 登録無し: カテゴリ別デフォルト値で妥当な推定
     return mv.cat === '変' ? 0.3 : 1.0;
   }
-  // 威力90を基準に線形、下限0.25（雀の涙）/上限1.5（りゅうせいぐん・ばくれつばん等）
+  // 威力90を基準に線形、下限0.25/上限1.5
   return Math.max(0.25, Math.min(1.5, bp / 90));
+}
+
+// 命中率補正（期待値換算）
+function accuracyFactor(mv) {
+  if (!mv || mv.cat === '変') return 1;
+  // 一撃必殺は powerFactor 側で成功率を反映済み
+  const sp = MOVE_SPECIAL[mv.name];
+  if (sp?.kind === 'ohko') return 1;
+  const acc = (mv.accuracy != null && mv.accuracy > 0 && mv.accuracy <= 100)
+    ? mv.accuracy
+    : (MOVE_ACCURACY[mv.name] ?? 100);
+  return Math.max(0.3, Math.min(1, acc / 100));
 }
 
 // 技の優先度（MOVE_PRIORITY から参照、未登録は0）
@@ -1181,12 +1373,15 @@ function TeamSetup({team, setTeam}) {
                   </div>
                   <div className="text-xs font-bold text-gray-600 pt-1 flex items-center gap-1">
                     <span>わざ</span>
-                    <span className="text-[9px] font-normal text-gray-400">（威力/優先度は任意・既知の技は自動推定）</span>
+                    <span className="text-[9px] font-normal text-gray-400">（威力/命中/優先度は任意・既知の技は自動推定）</span>
                   </div>
                   {[0,1,2,3].map(m => {
                     const mv = p.moves[m] || {};
-                    const autoBp = MOVE_BP[mv.name];
+                    const sp = MOVE_SPECIAL[mv.name];
+                    const autoBp = sp ? null : MOVE_BP[mv.name];
+                    const autoAcc = MOVE_ACCURACY[mv.name];
                     const autoPri = MOVE_PRIORITY[mv.name];
+                    const src = bpSource({...mv, cat: mv.cat || '物'});
                     return (
                       <div key={m} className="flex gap-1.5 flex-wrap items-center">
                         <input type="text" placeholder={`技${m+1}（名前）`} value={mv.name || ''}
@@ -1211,10 +1406,17 @@ function TeamSetup({team, setTeam}) {
                           })}
                         </div>
                         <input type="number" min="0" max="250" step="5"
-                          placeholder={autoBp != null ? `威${autoBp}` : '威力'}
+                          placeholder={sp ? '特殊' : autoBp != null ? `威${autoBp}` : '威力'}
                           value={mv.bp == null ? '' : mv.bp}
+                          disabled={!!sp}
                           onChange={e=>setMove(i,m,'bp', e.target.value === '' ? null : Math.max(0, Math.min(300, Number(e.target.value))))}
-                          title={autoBp != null ? `自動推定: ${autoBp}` : '技の威力（BP）: 未入力なら辞書から推定'}
+                          title={sp ? `特殊挙動技（${sp.kind}）: 威力は内部で計算` : autoBp != null ? `自動推定: ${autoBp}` : '技の威力（BP）: 未入力ならデフォルト(90相当)'}
+                          className={`border rounded px-1 py-1 text-xs w-14 ${sp ? 'bg-purple-50 text-purple-600' : src === 'default' && mv.name ? 'bg-yellow-50 border-yellow-400' : ''}`} />
+                        <input type="number" min="0" max="100" step="5"
+                          placeholder={autoAcc != null ? `命${autoAcc}` : '命中'}
+                          value={mv.accuracy == null ? '' : mv.accuracy}
+                          onChange={e=>setMove(i,m,'accuracy', e.target.value === '' ? null : Math.max(0, Math.min(100, Number(e.target.value))))}
+                          title={autoAcc != null ? `自動推定: 命中${autoAcc}%` : '命中率（0〜100）: 未入力なら100扱い'}
                           className="border rounded px-1 py-1 text-xs w-14" />
                         <input type="number" min="-5" max="5" step="1"
                           placeholder={autoPri != null ? `優${autoPri>0?'+':''}${autoPri}` : '優先'}
@@ -1222,6 +1424,14 @@ function TeamSetup({team, setTeam}) {
                           onChange={e=>setMove(i,m,'priority', e.target.value === '' ? null : Math.max(-5, Math.min(5, Number(e.target.value))))}
                           title={autoPri != null ? `自動推定: ${autoPri>0?'+':''}${autoPri}` : '優先度（-5〜+5）: 未入力なら辞書から推定'}
                           className="border rounded px-1 py-1 text-xs w-14" />
+                        {mv.name && src === 'default' && (
+                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-100 text-yellow-800 border border-yellow-400 self-center"
+                            title="この技は辞書に未登録。威力を入力すると精度UP">⚠威力?</span>
+                        )}
+                        {sp && (
+                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-300 self-center"
+                            title={`特殊挙動（${sp.kind}）: 専用式で計算`}>特殊</span>
+                        )}
                       </div>
                     );
                   })}
@@ -1268,7 +1478,9 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
         const powF = powerFactor(mv);
         const itemF = itemFactor(up, mv);
         const bonus = multNonLinearBonus(m);
-        const score = m * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus;
+        const accF = accuracyFactor(mv);
+        const score = m * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus * accF;
+        const bpSrc = bpSource(mv);
         // 与ダメ期待値%
         const oppStats = getPokeStatsObj(opp.id);
         const hpBase = oppStats?.hp || 80;
@@ -1276,7 +1488,7 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
         hits.push({
           userIdx:pi, userJp:up.jp,
           moveName: mv.name || '(無名)', moveType: mv.type, moveCat: mv.cat,
-          mult: m, stab, offF, defF, powF, itemF, bonus, score, dmgPct,
+          mult: m, stab, offF, defF, powF, itemF, bonus, accF, score, dmgPct, bpSrc,
           priority: movePriority(mv),
           userItem: up.item || '',
           userStats: getPokeStatsObj(up.id),
@@ -1396,6 +1608,18 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
                   {h.priority > 0 && (
                     <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-sky-200 text-sky-900"
                       title={`先制技 優先度+${h.priority}`}>先+{h.priority}</span>
+                  )}
+                  {h.bpSrc === 'special' && (
+                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-300"
+                      title="特殊挙動の技（固定ダメ/多段/変動/カウンター等）として計算">特殊</span>
+                  )}
+                  {h.bpSrc === 'default' && (
+                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-100 text-yellow-800 border border-yellow-400"
+                      title="威力が辞書・入力ともに未登録 → デフォルト(90相当)で計算。実数値を入れると精度が上がります">⚠威力?</span>
+                  )}
+                  {h.accF < 1 && (
+                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-300"
+                      title={`命中率補正 ×${h.accF.toFixed(2)}（期待値で減衰）`}>命中{Math.round(h.accF*100)}%</span>
                   )}
                   {h.dmgPct > 0 && (
                     <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${h.dmgPct >= 100 ? 'bg-red-600 text-white' : h.dmgPct >= 60 ? 'bg-red-300 text-red-900' : 'bg-gray-100 text-gray-700'}`}
@@ -1652,8 +1876,9 @@ function AnalysisPanel({userTeam, opponents}) {
                         const us = effectiveSpeed(u), os = effectiveSpeed(o);
                         const spdMark = us > os ? '先' : us < os ? '後' : '=';
                         const spdCls = us > os ? 'text-green-700 bg-green-100' : us < os ? 'text-red-700 bg-red-100' : 'text-gray-500 bg-gray-100';
+                        const bpTag = h?.bpSrc === 'user' ? '入力' : h?.bpSrc === 'special' ? '特殊' : h?.bpSrc === 'dict' ? '辞書' : h?.bpSrc === 'default' ? '推定' : '';
                         const offTip = h?.mv
-                          ? `🗡 ${h.mv.name||'(無名)'} (${h.mv.cat||'?'})\n  倍率×${h.mult} 一致${h.stab?'1.5':'1'} 攻${h.offF.toFixed(2)} 防${h.defF.toFixed(2)} 威${h.powF.toFixed(2)} 持${h.itemF.toFixed(2)}\n  = 攻撃${h.score.toFixed(2)} (≈${h.dmgPct}%ダメ)`
+                          ? `🗡 ${h.mv.name||'(無名)'} (${h.mv.cat||'?'}) [威力源:${bpTag}]\n  倍率×${h.mult} 一致${h.stab?'1.5':'1'} 攻${h.offF.toFixed(2)} 防${h.defF.toFixed(2)} 威${h.powF.toFixed(2)} 持${h.itemF.toFixed(2)} 命中${h.accF.toFixed(2)}\n  = 攻撃${h.score.toFixed(2)} (≈${h.dmgPct}%ダメ)`
                           : '🗡 有効打なし';
                         const thrTip = t?.type
                           ? `🛡 敵の想定打点: ${TYPE_JP[t.type]||t.type} ${t.cat||''}技\n  倍率×${t.mult} 被弾予測${t.dmgPct}% → 脅威${t.threat.toFixed(2)}`
@@ -1667,6 +1892,9 @@ function AnalysisPanel({userTeam, opponents}) {
                               {h?.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一</span>}
                               {h?.itemF > 1 && <span className="px-0.5 rounded bg-amber-200 text-amber-900">持</span>}
                               {h?.priority > 0 && <span className="px-0.5 rounded bg-sky-200 text-sky-900">先制</span>}
+                              {h?.bpSrc === 'special' && <span className="px-0.5 rounded bg-purple-200 text-purple-900" title="特殊挙動技">特</span>}
+                              {h?.bpSrc === 'default' && <span className="px-0.5 rounded bg-yellow-200 text-yellow-900 border border-yellow-500" title="威力未登録">⚠</span>}
+                              {h?.accF < 1 && <span className="px-0.5 rounded bg-rose-200 text-rose-900" title={`命中${Math.round(h.accF*100)}%`}>{Math.round(h.accF*100)}</span>}
                               <span className={`px-0.5 rounded ${spdCls}`}>{spdMark}</span>
                             </div>
                             {h?.dmgPct > 0 && (
