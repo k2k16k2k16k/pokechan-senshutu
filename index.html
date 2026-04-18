@@ -74,21 +74,104 @@ function allWeaknesses(defTypes) {
   return r;
 }
 
-// 一致技(STAB)考慮の最大攻撃スコア
+// 一致技考慮の最大攻撃スコア（マルチファクタ）
+// 形式: score = 倍率 × 一致 × 攻AC × 防BD × 威力 × 持ち物 × 4倍非線形
+// 返却: スコアの他、内訳と最適技、想定ダメージ% (期待値の粗見積り)
 function bestHitScore(userPoke, opp) {
-  if (!userPoke || !opp) return {score:0, mult:0, stab:false, mv:null, offF:1, itemF:1};
-  let best = {score:0, mult:0, stab:false, mv:null, offF:1, itemF:1};
+  const blank = {score:0, mult:0, stab:false, mv:null, offF:1, defF:1, powF:1, itemF:1, bonus:1, priority:0, dmgPct:0};
+  if (!userPoke || !opp) return blank;
+  let best = blank;
   for (const mv of (userPoke.moves || [])) {
     if (!mv.type || mv.cat === '変') continue;
     const mult = defensiveMult(mv.type, opp.types);
     if (mult === 0) continue;
     const stab = userPoke.types.includes(mv.type);
     const offF = offensiveFactor(userPoke, mv);
+    const defF = defensiveFactor(opp, mv);
+    const powF = powerFactor(mv);
     const itemF = itemFactor(userPoke, mv);
-    const score = mult * (stab ? 1.5 : 1) * offF * itemF;
-    if (score > best.score) best = {score, mult, stab, mv, offF, itemF};
+    const bonus = multNonLinearBonus(mult);
+    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus;
+    const priority = movePriority(mv);
+    // 相手HPに対する期待ダメージ% (粗見積り: スコア × 33 ≈ HP100基準の%)
+    const oppStats = getPokeStatsObj(opp.id);
+    const hpBase = oppStats?.hp || 80;
+    const dmgPct = Math.min(200, Math.round(score * 3300 / hpBase));
+    if (score > best.score) best = {score, mult, stab, mv, offF, defF, powF, itemF, bonus, priority, dmgPct};
   }
   return best;
+}
+
+// 相手→自軍の脅威読み: 敵の想定タイプ/カテゴリから最大想定火力を推定
+// 敵の技は未知なので、敵のタイプから最適STAB技を仮定し、敵の[atk,spa]の高い方で火力推定。
+// 返却: threatScore（0-10前後）、threatType、movCat（想定カテゴリ）、dmgPct、hasSTAB
+function defenseThreat(opp, userPoke) {
+  const blank = {threat:0, type:null, cat:null, mult:0, dmgPct:0};
+  if (!userPoke || !opp) return blank;
+  const oppStats = getPokeStatsObj(opp.id);
+  if (!oppStats) return blank;
+  // 攻撃側カテゴリは A vs C の高い方
+  const cat = oppStats.atk >= oppStats.spa ? '物' : '特';
+  const useStat = cat === '物' ? oppStats.atk : oppStats.spa;
+  // 線形攻撃補正
+  const offF = Math.max(0.4, Math.min(2.0, useStat / 100));
+  // 相手のタイプ各々について、自軍への倍率を計算し最大を採用
+  // （相手は一致技 STAB=1.5を使えると仮定）
+  let best = blank;
+  for (const t of opp.types) {
+    const mult = defensiveMult(t, userPoke.types);
+    if (mult === 0) continue;
+    // 自軍のBD
+    const userStats = getPokeStatsObj(userPoke.id);
+    const defStat = cat === '物' ? (userStats?.def || 80) : (userStats?.sdef || 80);
+    const defF = Math.max(0.55, Math.min(1.6, 100 / Math.max(40, defStat)));
+    // 想定威力90を仮定
+    const powF = 1.0;
+    const bonus = multNonLinearBonus(mult);
+    // 持ち物による軽減
+    const itemDefF = itemDefenseFactor(opp, userPoke, t, mult);
+    const threat = mult * 1.5 * offF * defF * powF * bonus * itemDefF;
+    const hp = userStats?.hp || 80;
+    const dmgPct = Math.min(200, Math.round(threat * 3300 / hp));
+    if (threat > best.threat) {
+      best = {threat, type:t, cat, mult, dmgPct, itemDefF};
+    }
+  }
+  // タイプなしor全て無効の場合、ノーマル物理技を仮定（最低限の脅威）
+  if (best.threat === 0) {
+    const mult = 1;
+    const userStats = getPokeStatsObj(userPoke.id);
+    const defStat = cat === '物' ? (userStats?.def || 80) : (userStats?.sdef || 80);
+    const defF = Math.max(0.55, Math.min(1.6, 100 / Math.max(40, defStat)));
+    const threat = mult * 1.0 * offF * defF * 1.0 * 1.0;
+    const hp = userStats?.hp || 80;
+    best = {threat, type:'normal', cat, mult, dmgPct:Math.min(200, Math.round(threat * 3300 / hp)), itemDefF:1};
+  }
+  return best;
+}
+
+// 総合マッチアップ: offense - defense_threat + speed_bonus
+// 返却: totalスコア（高いほど有利）、内訳
+function matchupScore(userPoke, opp) {
+  if (!userPoke || !opp) return {total:0, offense:0, threat:0, speed:0};
+  const off = bestHitScore(userPoke, opp);
+  const thr = defenseThreat(opp, userPoke);
+  const us = effectiveSpeed(userPoke);
+  const os = effectiveSpeed(opp);
+  // 速度ボーナス: 先制技があればその優先度分も加算
+  let speedBonus = 0;
+  if (off.priority > 0) {
+    speedBonus = 0.5 + off.priority * 0.25;
+  } else if (us > os) {
+    speedBonus = 0.4;
+  } else if (us === os) {
+    speedBonus = 0;
+  } else {
+    speedBonus = -0.5; // 後手ペナルティ（相手のOHKOリスク）
+  }
+  // 脅威重みは0.7（こちらの攻撃を優先しつつ被弾も考慮）
+  const total = off.score - thr.threat * 0.7 + speedBonus;
+  return {total, offense:off.score, threat:thr.threat, speed:speedBonus, off, thr};
 }
 
 // チーム総合評価 (高いほど良い)
@@ -152,11 +235,19 @@ const GW_AID = {'3':'553138','4':'553139','7':'553152','8':'553153','9':'553154'
 const gwDetailUrl = (pokeId) => GW_AID[pokeId] ? `https://gamewith.jp/pokemon-champions/${GW_AID[pokeId]}` : 'https://gamewith.jp/pokemon-champions/546414';
 
 // ====== 物理/特殊型判定 ======
-// 種族値ベース: atk/spa を比較 (1.25倍以上で偏りありと判定)
-function classifyByStats(pokeId) {
+// POKE_STATS形式: [hp, atk, def, spa, sdef]
+// 正規化ヘルパー（hp,def,sdef は未登録時 80 で補完）
+function getPokeStatsObj(pokeId) {
   const s = POKE_STATS[pokeId];
   if (!s) return null;
-  const [atk, spa] = s;
+  // 後方互換: 旧 [atk,spa] 形式でも読めるように
+  if (s.length === 2) return { hp:80, atk:s[0], def:80, spa:s[1], sdef:80 };
+  return { hp:s[0], atk:s[1], def:s[2], spa:s[3], sdef:s[4] };
+}
+function classifyByStats(pokeId) {
+  const s = getPokeStatsObj(pokeId);
+  if (!s) return null;
+  const {atk, spa} = s;
   if (atk >= spa * 1.25) return {key:'phys', jp:'物理', emoji:'🥊', cls:'bg-red-100 text-red-700 border-red-300', atk, spa};
   if (spa >= atk * 1.25) return {key:'spec', jp:'特殊', emoji:'✨', cls:'bg-blue-100 text-blue-700 border-blue-300', atk, spa};
   return {key:'mixed', jp:'両刀', emoji:'⚔️', cls:'bg-purple-100 text-purple-700 border-purple-300', atk, spa};
@@ -332,30 +423,161 @@ const ITEM_GROUPS = [
   { key:'berry_resist', label:'◆ 弱点半減きのみ' },
 ];
 
-// 攻撃側ステータス補正（技の分類に応じて A/C を参照、不一致は減点）
+// ====== 技データ（威力 & 優先度） ======
+// カバー率: 主要な攻撃技 + 先制技 + 定番変化技。未登録の技はカテゴリ別デフォルトで補完。
+const MOVE_BP = {
+  // --- ノーマル ---
+  'たいあたり':40,'のしかかり':85,'すてみタックル':120,'ばくれつパンチ':100,'ギガインパクト':150,
+  'はかいこうせん':150,'しんそく':80,'ねこだまし':40,'でんこうせっか':40,'おんがえし':102,'やつあたり':102,
+  'きりさく':70,'みねうち':40,'メロメロ':0,'ヘッドバット':70,'ハイパーボイス':90,'あくまのキッス':0,
+  'ばかぢから':120,'おいうち':40,'しぜんのちから':0,'のろい':0,'かげぶんしん':0,'まもる':0,'みがわり':0,
+  'しんぴのまもり':0,'ちょうはつ':0,'じこさいせい':0,'タマゴうみ':0,'ねむる':0,'つるぎのまい':0,
+  'てっぺき':0,'わるだくみ':0,'めいそう':0,'りゅうのまい':0,'ちょうのまい':0,'コットンガード':0,
+  // --- 炎 ---
+  'ひのこ':40,'かえんほうしゃ':90,'だいもんじ':110,'オーバーヒート':130,'フレアドライブ':120,
+  'かえんぐるま':60,'ねっぷう':95,'ブレイズキック':85,'フレアソング':80,'もえつきる':130,
+  'せいなるほのお':100,'ほのおのパンチ':75,'ほのおのキバ':65,'ふんえん':50,'オーバードライブ':80,
+  // --- 水 ---
+  'みずでっぽう':40,'なみのり':90,'ハイドロポンプ':110,'たきのぼり':80,'アクアジェット':40,
+  'アクアテール':90,'アクアブレイク':85,'ねっとう':80,'こうそくスピン':50,'シェルブレード':75,
+  'ダイビング':80,'ハイドロカノン':150,'みずのはどう':60,'ダークホール':0,
+  // --- 電気 ---
+  'でんきショック':40,'10まんボルト':90,'かみなり':110,'かみなりパンチ':75,'スパーク':65,
+  'でんじほう':120,'ほうでん':80,'ボルテッカー':120,'ワイルドボルト':90,'エレキボール':0,
+  'ライジングボルト':70,'でんじは':0,'プラズマシャワー':0,
+  // --- 草 ---
+  'つるのムチ':45,'はっぱカッター':55,'ソーラービーム':120,'リーフブレード':90,'ウッドハンマー':120,
+  'タネばくだん':80,'やどりぎのタネ':0,'ねむりごな':0,'しびれごな':0,'キノコのほうし':0,
+  'リーフストーム':130,'エナジーボール':90,'タネマシンガン':25,'くさむすび':0,'パワーウィップ':120,
+  // --- こおり ---
+  'こおりのつぶて':40,'れいとうビーム':90,'ふぶき':110,'つららばり':25,'フリーズドライ':70,
+  'こごえるかぜ':55,'つららおとし':85,'こおりのキバ':65,'ぜったいれいど':0,'オーロラビーム':65,
+  // --- 格闘 ---
+  'からてチョップ':50,'マッハパンチ':40,'かわらわり':75,'インファイト':120,'きあいパンチ':150,
+  'しんくうは':40,'スカイアッパー':85,'アームハンマー':100,'きあいだま':120,'かみくだく':80,
+  'はっけい':60,'ばくれつけん':100,'ドレインパンチ':75,'ローキック':65,
+  // --- 毒 ---
+  'どくづき':80,'ダストシュート':120,'ヘドロ爆弾':90,'ヘドロウェーブ':95,'どくどく':0,
+  'クロスポイズン':70,'ベノムショック':65,'どくびし':0,'なげつける':0,
+  // --- 地面 ---
+  'じしん':100,'じならし':60,'あなをほる':80,'じわれ':0,'じゃれつく':0,'マッドショット':55,
+  'ドラゴンアロー':50,'じめんのはどう':60,'10まんばりき':95,
+  // --- 飛行 ---
+  'つばさでうつ':60,'エアカッター':60,'エアスラッシュ':75,'ぼうふう':110,'ゴッドバード':140,
+  'ブレイブバード':120,'アクロバット':55,'ドリルくちばし':80,'ふきとばし':0,'おいかぜ':0,
+  // --- エスパー ---
+  'ねんりき':50,'サイケこうせん':65,'サイコキネシス':90,'サイコブースト':140,'サイコカッター':70,
+  'ゼンのちから':90,'シンクロノイズ':120,'サイコファング':85,'リフレクター':0,'ひかりのかべ':0,
+  'めいそう':0,'トリックルーム':0,'ワンダールーム':0,'マジックルーム':0,'ねこのて':0,
+  // --- 虫 ---
+  'むしのさざめき':90,'シグナルビーム':75,'むしくい':60,'とんぼがえり':70,'メガホーン':120,
+  'きゅうけつ':80,'ぎんいろのかぜ':60,'こうそくいどう':0,
+  // --- 岩 ---
+  'いわおとし':50,'いわくだき':40,'ストーンエッジ':100,'げんしのちから':60,'パワージェム':80,
+  'ロックブラスト':25,'ロッククライム':90,'ステルスロック':0,
+  // --- ゴースト ---
+  'したでなめる':30,'ナイトヘッド':0,'シャドーボール':80,'シャドークロー':70,'シャドーパンチ':60,
+  'のろい':0,'おどろかす':30,'たたりめ':65,'ファントムフォース':90,'かげうち':40,
+  // --- ドラゴン ---
+  'りゅうのいぶき':60,'りゅうせいぐん':130,'ドラゴンクロー':80,'げきりん':120,'ドラゴンテール':60,
+  'アイアンテール':100,'ドラゴンダイブ':100,'りゅうのはどう':85,'ダブルチョップ':40,
+  // --- 悪 ---
+  'かみつく':60,'かみくだく':80,'あくのはどう':80,'イカサマ':95,'ふいうち':70,'ちょうはつ':0,
+  'つじぎり':70,'バッドネットワーク':85,'まとわりつく':20,'おいうち':40,
+  // --- 鋼 ---
+  'メタルクロー':50,'アイアンヘッド':80,'てっぺき':0,'ラスターカノン':80,'バレットパンチ':40,
+  'ジャイロボール':0,'スマートホーン':70,'メタルバースト':0,
+  // --- フェアリー ---
+  'ようせいのかぜ':40,'ドレインキッス':50,'ムーンフォース':95,'じゃれつく':90,'つきのひかり':0,
+  'マジカルシャイン':80,'スピリットブレイク':75,
+};
+
+// 優先度のある技だけ記載（未登録は0扱い）
+const MOVE_PRIORITY = {
+  'しんそく':2,
+  'でんこうせっか':1,'マッハパンチ':1,'バレットパンチ':1,'しんくうは':1,'アクアジェット':1,
+  'こおりのつぶて':1,'かげうち':1,'ふいうち':1,'みねうち':1,'ねこだまし':3,
+  'リフレクター':-1,'ひかりのかべ':-1,'ちょうはつ':-1,
+  'がまん':-4,'カウンター':-5,'ミラーコート':-5,'メタルバースト':-4,
+};
+
+// ====== スコア計算エンジン（攻撃/防御/マッチアップ） ======
+// 基準値100を中心に、線形 stat/100 を採用（非クランプ）。
+// 期待ダメージは ~ AC/BD に比例するので、線形が最も解釈しやすい。
+
+// 攻撃側ステータス補正（技の分類に応じて A/C を参照、不一致は大幅減点）
 function offensiveFactor(poke, mv) {
   if (!poke || !mv || !mv.cat || mv.cat === '変') return 1;
-  const s = POKE_STATS[poke.id];
+  const s = getPokeStatsObj(poke.id);
   if (!s) return 1;
-  const [atk, spa] = s;
-  const useStat = mv.cat === '物' ? atk : spa;
-  const altStat = mv.cat === '物' ? spa : atk;
-  let f = Math.max(0.5, Math.min(1.7, useStat / 100));
-  // 不一致型（物理技なのに特殊型、など）は大幅減点
-  if (useStat < altStat * 0.8) f *= 0.7;
+  const useStat = mv.cat === '物' ? s.atk : s.spa;
+  const altStat = mv.cat === '物' ? s.spa : s.atk;
+  // 線形 AC/100、下限0.4・上限2.0（極端な分布も反映）
+  let f = Math.max(0.4, Math.min(2.0, useStat / 100));
+  // 不一致型（物理技なのに特殊型、など）は半減
+  if (useStat < altStat * 0.8) f *= 0.5;
   return f;
 }
 
+// 防御側ステータス補正（相手のB/Dを考慮した実ダメージ比例化）
+// 敵のB/Dが高いほど与ダメージは下がる → スコアに 100/DB を乗算
+function defensiveFactor(opp, mv) {
+  if (!opp || !mv || mv.cat === '変') return 1;
+  const s = getPokeStatsObj(opp.id);
+  if (!s) return 1;
+  const defStat = mv.cat === '物' ? s.def : s.sdef;
+  // 100 基準、下限0.55・上限1.6（ゴツい壁にはスコアがしっかり下がる）
+  return Math.max(0.55, Math.min(1.6, 100 / Math.max(40, defStat)));
+}
+
+// 技の威力補正（登録されていれば利用、無ければカテゴリ別のデフォルト）
+function powerFactor(mv) {
+  if (!mv || mv.cat === '変') return 0.3;
+  const bp = (mv.bp != null && mv.bp > 0) ? mv.bp : (MOVE_BP[mv.name] ?? null);
+  if (bp == null) {
+    // 登録無し: カテゴリ別デフォルト値で妥当な推定
+    return mv.cat === '変' ? 0.3 : 1.0;
+  }
+  // 威力90を基準に線形、下限0.25（雀の涙）/上限1.5（りゅうせいぐん・ばくれつばん等）
+  return Math.max(0.25, Math.min(1.5, bp / 90));
+}
+
+// 技の優先度（MOVE_PRIORITY から参照、未登録は0）
+function movePriority(mv) {
+  if (!mv) return 0;
+  if (mv.priority != null) return mv.priority;
+  return MOVE_PRIORITY[mv.name] ?? 0;
+}
+
+// 4倍弱点/4倍耐性の非線形ボーナス（実戦ではほぼ確定OHKO/確定ガード）
+function multNonLinearBonus(mult) {
+  if (mult >= 4) return 1.2;   // 4倍 → 実質+20%ボーナス
+  if (mult <= 0.25) return 0.8; // 1/4 → 追加減衰
+  return 1;
+}
+
 // 持ち物による攻撃側ダメージ補正（ポケチャン準拠）
-// - でんきだま: ピカチュウ(id='33')限定で A/C ×2
-// - タイプ強化アイテム18種: 該当タイプ技 ×1.2
-// - その他（きのみ/こだわりスカーフ/補助系）: スコア補正なし（別途表示）
 function itemFactor(poke, mv) {
   if (!poke?.item || !mv) return 1;
   const it = ITEM_MAP[poke.item];
   if (!it) return 1;
   if (poke.item === 'light_ball' && poke.id === '33' && (mv.cat === '物' || mv.cat === '特')) return 2.0;
   if (it.typeBoost && mv.type === it.typeBoost) return 1.2;
+  return 1;
+}
+
+// 防御側の持ち物補正（受けるダメージの軽減倍率を返す。小さいほど耐える）
+// - きあいのタスキ: OHKO回避想定で 0.5（運用上半減相当とみなす）
+// - たべのこし: 小さな持続回復→軽い軽減 0.92
+// - 弱点半減きのみ: 該当タイプ×効果抜群時のみ 0.5
+// - しろいハーブ/メンタルハーブ/スカーフ: 受けダメ補正は無し
+function itemDefenseFactor(opp, user, oppMoveType, userMult) {
+  if (!user?.item) return 1;
+  const it = ITEM_MAP[user.item];
+  if (!it) return 1;
+  if (it.id === 'focus_sash') return 0.5;
+  if (it.id === 'leftovers' || it.id === 'shell_bell' || it.id === 'sitrus' || it.id === 'oran') return 0.92;
+  if (it.group === 'berry_resist' && it.resist === oppMoveType && userMult >= 2) return 0.5;
   return 1;
 }
 
@@ -396,7 +618,7 @@ const ROSTER=[{"id":"3","dex":3,"jp":"フシギバナ","types":["grass","poison"
 
 // ====== 攻撃/特攻種族値（PokeAPIより） ======
 // { id: [atk, spa] } — 物理/特殊型判定の基礎データ
-const POKE_STATS={'3':[82,100],'4':[100,122],'7':[84,109],'8':[130,130],'9':[104,159],'12':[83,85],'13':[103,135],'19':[90,45],'20':[150,15],'23':[80,70],'24':[80,135],'32':[95,65],'33':[55,50],'34':[90,90],'35':[85,95],'49':[70,95],'50':[80,135],'53':[76,81],'54':[67,81],'81':[110,100],'82':[115,95],'88':[50,135],'89':[50,175],'92':[130,65],'95':[105,100],'96':[125,135],'111':[75,100],'112':[75,130],'113':[100,100],'130':[65,130],'131':[65,170],'157':[95,40],'158':[125,60],'164':[75,100],'165':[100,130],'172':[125,55],'173':[155,65],'174':[100,40],'1184':[110,30],'1185':[110,30],'1186':[110,30],'176':[125,60],'177':[155,70],'179':[48,48],'181':[65,110],'182':[65,110],'183':[130,95],'189':[105,60],'190':[135,70],'191':[110,65],'200':[134,100],'201':[124,145],'208':[92,143],'209':[92,143],'212':[84,109],'213':[84,119],'216':[105,79],'217':[160,89],'225':[90,60],'238':[75,115],'239':[95,165],'242':[50,60],'244':[75,90],'254':[65,130],'255':[65,60],'257':[75,100],'258':[65,110],'264':[90,60],'267':[85,55],'268':[125,55],'273':[130,55],'274':[150,65],'276':[125,40],'277':[185,40],'292':[80,40],'293':[140,40],'295':[90,110],'296':[90,140],'315':[134,95],'316':[164,95],'352':[50,95],'355':[65,125],'356':[85,165],'376':[75,65],'377':[85,85],'382':[110,60],'383':[140,60],'385':[60,60],'386':[100,80],'388':[75,105],'389':[75,135],'398':[120,95],'399':[140,110],'403':[100,105],'404':[120,145],'405':[85,85],'415':[70,70],'416':[110,110],'432':[60,100],'433':[70,70],'434':[70,70],'435':[70,70],'436':[70,70],'439':[115,83],'440':[165,93],'444':[50,95],'445':[50,135],'446':[130,75],'447':[150,115],'451':[80,80],'452':[120,120],'489':[109,75],'492':[104,104],'495':[86,111],'506':[120,95],'508':[70,125],'510':[165,65],'512':[52,47],'536':[76,54],'537':[136,54],'551':[92,92],'554':[130,80],'555':[170,120],'559':[110,115],'560':[145,140],'563':[112,68],'568':[106,86],'574':[92,92],'575':[132,132],'576':[120,45],'579':[140,55],'585':[110,60],'586':[60,130],'587':[95,45],'588':[130,70],'590':[125,65],'591':[165,65],'594':[80,80],'595':[80,140],'596':[50,95],'597':[65,105],'598':[65,105],'599':[65,105],'600':[65,105],'601':[65,105],'625':[75,75],'628':[123,100],'629':[148,110],'632':[100,108],'633':[108,100],'635':[85,60],'640':[88,88],'642':[98,98],'644':[98,98],'646':[98,98],'661':[135,50],'662':[165,65],'663':[60,60],'664':[60,80],'667':[140,55],'681':[67,77],'690':[117,65],'706':[50,95],'712':[95,60],'715':[105,120],'716':[100,125],'724':[65,125],'729':[95,110],'738':[75,75],'763':[55,145],'764':[75,175],'769':[130,70],'773':[66,81],'774':[81,66],'779':[124,55],'780':[159,70],'793':[105,125],'795':[60,135],'817':[107,74],'818':[137,74],'821':[69,114],'822':[69,159],'825':[95,103],'826':[125,133],'828':[56,50],'831':[81,74],'834':[52,90],'842':[65,125],'843':[85,155],'844':[65,112],'848':[124,69],'849':[80,65],'851':[48,83],'852':[48,83],'853':[48,143],'854':[48,143],'857':[50,50],'858':[50,50],'860':[72,99],'862':[80,85],'873':[73,120],'875':[55,109],'877':[121,69],'879':[77,99],'880':[65,110],'881':[92,74],'882':[137,74],'883':[58,81],'888':[100,110],'889':[100,110],'890':[80,80],'892':[110,65],'897':[90,58],'898':[90,58],'899':[90,58],'900':[90,58],'902':[117,44],'903':[127,34],'905':[70,97],'919':[107,100],'920':[112,95],'923':[115,80],'926':[74,126],'929':[120,75],'936':[132,62],'937':[157,62],'946':[115,55],'947':[115,55],'948':[115,55],'952':[63,53],'954':[125,55],'956':[70,50],'962':[64,111],'967':[120,50],'969':[60,90],'970':[120,40],'984':[90,50],'986':[60,135],'987':[85,160],'991':[110,100],'1037':[87,53],'1055':[110,95],'1056':[85,100],'1058':[107,65],'1071':[65,134],'1075':[90,136],'1083':[85,110],'1084':[95,50],'1086':[60,110],'1097':[95,70],'1108':[120,100],'1126':[105,105],'1127':[135,45],'1129':[112,80],'1130':[112,80],'1131':[130,40],'1137':[110,81],'1140':[75,110],'1143':[120,85],'1157':[75,65],'1281':[75,65],'1169':[100,45],'1172':[60,125],'1173':[125,60],'1175':[64,103],'1193':[108,108],'1194':[138,138],'1198':[60,101],'1201':[75,70],'1206':[70,53],'1207':[70,53],'1211':[85,60],'1213':[55,130],'1214':[90,150],'1179':[90,110],'1220':[135,60],'1261':[60,121],'1271':[105,125],'1275':[80,120]};
+const POKE_STATS={'3':[80,82,83,100,100],'4':[80,100,108,122,125],'7':[78,84,78,109,85],'8':[78,130,111,130,85],'9':[78,104,78,159,115],'12':[80,83,80,85,80],'13':[80,103,80,135,80],'19':[65,90,40,45,80],'20':[65,150,65,15,105],'23':[83,80,75,70,70],'24':[83,80,100,135,95],'32':[60,95,69,65,79],'33':[35,55,40,50,50],'34':[60,90,55,90,80],'35':[60,85,55,95,80],'49':[95,70,73,95,90],'50':[95,80,98,135,115],'53':[73,76,75,81,100],'54':[73,67,75,81,100],'81':[90,110,80,100,80],'82':[90,115,80,95,80],'88':[55,50,45,135,95],'89':[55,50,70,175,120],'92':[90,130,80,65,85],'95':[80,105,65,100,70],'96':[80,125,90,135,95],'111':[95,75,110,100,80],'112':[95,75,135,130,105],'113':[95,100,135,100,105],'130':[60,65,60,130,75],'131':[60,65,85,170,100],'157':[105,95,80,40,80],'158':[105,125,105,60,105],'164':[60,75,85,100,85],'165':[60,100,110,130,110],'172':[65,125,100,55,70],'173':[65,155,125,65,95],'174':[75,100,95,40,70],'1184':[75,110,95,30,70],'1185':[75,110,95,30,70],'1186':[75,110,95,30,70],'176':[95,125,79,60,100],'177':[95,155,104,70,125],'179':[48,48,48,48,48],'181':[130,65,60,110,95],'182':[65,65,60,110,95],'183':[65,130,60,95,110],'189':[80,105,65,60,75],'190':[80,135,90,70,100],'191':[160,110,65,65,110],'200':[91,134,95,100,100],'201':[91,124,120,145,125],'208':[80,92,125,143,125],'209':[80,92,125,143,125],'212':[78,84,78,109,85],'213':[78,84,78,119,85],'216':[85,105,100,79,83],'217':[85,160,125,89,108],'225':[70,90,70,60,70],'238':[90,75,85,115,90],'239':[90,95,110,165,115],'242':[100,50,80,60,80],'244':[90,75,75,90,100],'254':[65,65,60,130,95],'255':[95,65,110,60,130],'257':[95,75,80,100,110],'258':[95,65,80,110,110],'264':[75,90,140,60,60],'267':[75,85,200,55,65],'268':[75,125,225,55,90],'273':[70,130,100,55,80],'274':[70,150,100,65,80],'276':[80,125,75,40,95],'277':[80,185,100,40,120],'292':[65,80,140,40,70],'293':[65,140,165,40,95],'295':[75,90,50,110,80],'296':[75,90,75,140,105],'315':[100,134,110,95,100],'316':[100,164,135,95,125],'352':[60,50,100,95,70],'355':[68,65,65,125,115],'356':[68,85,90,165,140],'376':[50,75,75,65,65],'377':[50,85,100,85,90],'382':[70,110,180,60,60],'383':[70,140,205,60,85],'385':[60,60,75,60,75],'386':[60,100,100,80,100],'388':[70,75,60,105,60],'389':[70,75,85,135,85],'398':[70,120,40,95,40],'399':[70,140,40,110,40],'403':[70,100,70,105,75],'404':[70,120,95,145,100],'405':[70,85,140,85,70],'415':[75,70,90,70,105],'416':[75,110,115,110,130],'432':[95,60,79,100,125],'433':[70,70,70,70,70],'434':[70,70,70,70,70],'435':[70,70,70,70,70],'436':[70,70,70,70,70],'439':[64,115,65,83,63],'440':[64,165,90,93,88],'444':[75,50,80,95,90],'445':[75,50,105,135,115],'446':[65,130,60,75,60],'447':[65,150,85,115,85],'451':[80,80,80,80,80],'452':[80,120,105,120,105],'489':[95,109,105,75,85],'492':[76,104,71,104,71],'495':[84,86,88,111,101],'506':[80,120,79,95,79],'508':[60,70,65,125,105],'510':[97,165,60,65,50],'512':[60,52,168,47,138],'536':[65,76,84,54,96],'537':[65,136,109,54,121],'551':[50,92,108,92,108],'554':[108,130,95,80,85],'555':[108,170,120,120,110],'559':[70,110,70,115,70],'560':[70,145,95,140,95],'563':[108,112,118,68,72],'568':[83,106,65,86,65],'574':[90,92,75,92,85],'575':[90,132,100,132,110],'576':[70,120,65,45,85],'579':[115,140,130,55,55],'585':[65,110,130,60,65],'586':[65,60,110,130,95],'587':[75,95,125,45,75],'588':[110,130,80,70,60],'590':[68,125,65,65,115],'591':[68,165,90,65,140],'594':[70,80,70,80,70],'595':[70,80,95,140,95],'596':[50,50,77,95,77],'597':[50,65,102,105,102],'598':[50,65,102,105,102],'599':[50,65,102,105,102],'600':[50,65,102,105,102],'601':[50,65,102,105,102],'625':[75,75,95,75,95],'628':[110,123,65,100,65],'629':[110,148,90,110,90],'632':[95,100,85,108,70],'633':[95,108,85,100,70],'635':[60,85,69,60,69],'640':[64,88,50,88,50],'642':[75,98,63,98,63],'644':[75,98,63,98,63],'646':[75,98,63,98,63],'661':[110,135,60,50,65],'662':[110,165,85,65,90],'663':[103,60,86,60,86],'664':[103,60,111,80,111],'667':[105,140,95,55,65],'681':[60,67,85,77,75],'690':[95,117,80,65,70],'706':[58,50,145,95,105],'712':[80,95,82,60,82],'715':[60,105,60,120,60],'716':[60,100,60,125,60],'724':[110,65,75,125,85],'729':[71,95,85,110,95],'738':[55,75,60,75,60],'763':[60,55,90,145,90],'764':[60,75,115,175,115],'769':[95,130,80,70,80],'773':[109,66,84,81,99],'774':[109,81,109,66,124],'779':[89,124,80,55,80],'780':[89,159,105,70,105],'793':[92,105,90,125,90],'795':[85,60,65,135,105],'817':[88,107,122,74,75],'818':[88,137,147,74,100],'821':[75,69,72,114,100],'822':[75,69,97,159,125],'825':[72,95,67,103,71],'826':[72,125,92,133,96],'828':[85,56,77,50,77],'831':[78,81,71,74,69],'834':[80,52,50,90,50],'842':[54,65,72,125,123],'843':[54,85,72,155,123],'844':[78,65,68,112,154],'848':[95,124,78,69,71],'849':[75,80,60,65,90],'851':[74,48,76,83,81],'852':[74,48,76,83,81],'853':[74,48,101,143,106],'854':[74,48,101,143,106],'857':[60,50,140,50,140],'858':[60,50,140,50,140],'860':[101,72,72,99,89],'862':[82,80,86,85,75],'873':[71,73,88,120,89],'875':[62,55,52,109,94],'877':[82,121,119,69,59],'879':[123,77,72,99,92],'880':[95,65,65,110,130],'881':[78,92,75,74,63],'882':[78,137,100,74,88],'883':[67,58,57,81,67],'888':[90,100,70,110,150],'889':[90,100,70,110,150],'890':[57,80,91,80,87],'892':[85,110,76,65,82],'897':[65,90,122,58,75],'898':[65,90,122,58,75],'899':[65,90,122,58,75],'900':[65,90,122,58,75],'902':[95,117,184,44,46],'903':[95,127,184,34,46],'905':[85,70,80,97,80],'919':[78,107,75,100,100],'920':[78,112,75,95,100],'923':[95,115,90,80,90],'926':[80,74,74,126,116],'929':[80,120,75,75,75],'936':[97,132,77,62,67],'937':[97,157,77,62,67],'946':[75,115,65,55,65],'947':[75,115,65,55,65],'948':[75,115,65,55,65],'952':[50,63,152,53,142],'954':[100,125,100,55,85],'956':[68,70,92,50,132],'962':[68,64,60,111,60],'967':[72,120,98,50,98],'969':[90,60,80,90,110],'970':[100,120,90,40,60],'984':[55,90,80,50,105],'986':[78,60,85,135,91],'987':[78,85,110,160,116],'991':[75,110,125,100,105],'1037':[98,87,105,53,85],'1055':[70,110,80,95,60],'1056':[110,85,80,100,80],'1058':[72,107,125,65,70],'1071':[60,65,65,134,114],'1075':[57,90,95,136,103],'1083':[80,85,75,110,100],'1084':[58,95,145,50,105],'1086':[65,60,75,110,121],'1097':[58,95,58,70,58],'1108':[88,120,75,100,75],'1126':[103,105,72,105,75],'1127':[70,135,95,45,70],'1129':[120,112,65,80,75],'1130':[120,112,65,80,75],'1131':[80,130,60,40,80],'1137':[76,110,70,81,70],'1140':[104,75,100,110,75],'1143':[85,120,80,85,75],'1157':[74,75,70,65,75],'1281':[74,75,70,65,75],'1169':[100,100,130,45,90],'1172':[85,60,100,125,80],'1173':[75,125,80,60,100],'1175':[109,64,91,103,83],'1193':[65,108,65,108,65],'1194':[65,138,90,138,90],'1198':[95,60,60,101,60],'1201':[85,75,77,70,105],'1206':[100,70,72,53,62],'1207':[100,70,72,53,62],'1211':[70,85,145,60,55],'1213':[83,55,90,130,81],'1214':[83,90,115,150,106],'1179':[120,90,70,110,70],'1220':[100,135,120,60,85],'1261':[71,60,106,121,80],'1271':[90,105,130,125,65],'1275':[106,80,110,120,80]};
 
 // ====== 写真から敵チーム検出 (Gemini Vision) ======
 const GEMINI_MODEL = 'gemini-2.5-flash';
@@ -957,32 +1179,52 @@ function TeamSetup({team, setTeam}) {
                       ))}
                     </select>
                   </div>
-                  <div className="text-xs font-bold text-gray-600 pt-1">わざ</div>
-                  {[0,1,2,3].map(m => (
-                    <div key={m} className="flex gap-1.5 flex-wrap">
-                      <input type="text" placeholder={`技${m+1}（名前）`} value={p.moves[m]?.name || ''}
-                        onChange={e=>setMove(i,m,'name',e.target.value)}
-                        className="flex-1 min-w-[120px] border rounded px-2 py-1 text-xs" />
-                      <select value={p.moves[m]?.type || ''} onChange={e=>setMove(i,m,'type',e.target.value)}
-                        className="border rounded px-1 py-1 text-xs w-24">
-                        <option value="">タイプ</option>
-                        {TYPES.map(t=><option key={t} value={t}>{TYPE_JP[t]}</option>)}
-                      </select>
-                      <div className="flex gap-0.5" role="group" aria-label="分類">
-                        {['物','特','変'].map(c => {
-                          const active = p.moves[m]?.cat === c;
-                          return (
-                            <button key={c} type="button"
-                              onClick={()=>setMove(i,m,'cat', active ? '' : c)}
-                              title={c==='物'?'物理':(c==='特'?'特殊':'変化')}
-                              className={`w-7 h-7 text-xs font-bold rounded border transition ${active ? MOVE_CAT_CLS[c]+' border-transparent' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>
-                              {c}
-                            </button>
-                          );
-                        })}
+                  <div className="text-xs font-bold text-gray-600 pt-1 flex items-center gap-1">
+                    <span>わざ</span>
+                    <span className="text-[9px] font-normal text-gray-400">（威力/優先度は任意・既知の技は自動推定）</span>
+                  </div>
+                  {[0,1,2,3].map(m => {
+                    const mv = p.moves[m] || {};
+                    const autoBp = MOVE_BP[mv.name];
+                    const autoPri = MOVE_PRIORITY[mv.name];
+                    return (
+                      <div key={m} className="flex gap-1.5 flex-wrap items-center">
+                        <input type="text" placeholder={`技${m+1}（名前）`} value={mv.name || ''}
+                          onChange={e=>setMove(i,m,'name',e.target.value)}
+                          className="flex-1 min-w-[120px] border rounded px-2 py-1 text-xs" />
+                        <select value={mv.type || ''} onChange={e=>setMove(i,m,'type',e.target.value)}
+                          className="border rounded px-1 py-1 text-xs w-24">
+                          <option value="">タイプ</option>
+                          {TYPES.map(t=><option key={t} value={t}>{TYPE_JP[t]}</option>)}
+                        </select>
+                        <div className="flex gap-0.5" role="group" aria-label="分類">
+                          {['物','特','変'].map(c => {
+                            const active = mv.cat === c;
+                            return (
+                              <button key={c} type="button"
+                                onClick={()=>setMove(i,m,'cat', active ? '' : c)}
+                                title={c==='物'?'物理':(c==='特'?'特殊':'変化')}
+                                className={`w-7 h-7 text-xs font-bold rounded border transition ${active ? MOVE_CAT_CLS[c]+' border-transparent' : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'}`}>
+                                {c}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <input type="number" min="0" max="250" step="5"
+                          placeholder={autoBp != null ? `威${autoBp}` : '威力'}
+                          value={mv.bp == null ? '' : mv.bp}
+                          onChange={e=>setMove(i,m,'bp', e.target.value === '' ? null : Math.max(0, Math.min(300, Number(e.target.value))))}
+                          title={autoBp != null ? `自動推定: ${autoBp}` : '技の威力（BP）: 未入力なら辞書から推定'}
+                          className="border rounded px-1 py-1 text-xs w-14" />
+                        <input type="number" min="-5" max="5" step="1"
+                          placeholder={autoPri != null ? `優${autoPri>0?'+':''}${autoPri}` : '優先'}
+                          value={mv.priority == null ? '' : mv.priority}
+                          onChange={e=>setMove(i,m,'priority', e.target.value === '' ? null : Math.max(-5, Math.min(5, Number(e.target.value))))}
+                          title={autoPri != null ? `自動推定: ${autoPri>0?'+':''}${autoPri}` : '優先度（-5〜+5）: 未入力なら辞書から推定'}
+                          className="border rounded px-1 py-1 text-xs w-14" />
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1022,14 +1264,22 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
       if (m >= 2) {
         const stab = up.types.includes(mv.type);
         const offF = offensiveFactor(up, mv);
+        const defF = defensiveFactor(opp, mv);
+        const powF = powerFactor(mv);
         const itemF = itemFactor(up, mv);
-        const score = m * (stab ? 1.5 : 1) * offF * itemF;
+        const bonus = multNonLinearBonus(m);
+        const score = m * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus;
+        // 与ダメ期待値%
+        const oppStats = getPokeStatsObj(opp.id);
+        const hpBase = oppStats?.hp || 80;
+        const dmgPct = Math.min(200, Math.round(score * 3300 / hpBase));
         hits.push({
           userIdx:pi, userJp:up.jp,
           moveName: mv.name || '(無名)', moveType: mv.type, moveCat: mv.cat,
-          mult: m, stab, offF, itemF, score,
+          mult: m, stab, offF, defF, powF, itemF, bonus, score, dmgPct,
+          priority: movePriority(mv),
           userItem: up.item || '',
-          userStats: POKE_STATS[up.id] || null,
+          userStats: getPokeStatsObj(up.id),
         });
       }
     });
@@ -1110,14 +1360,16 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
         ) : (
           <div className="space-y-1">
             {hits.map((h, i) => {
-              const scoreCls = h.score >= 6 ? 'bg-red-600 text-white'
-                : h.score >= 4 ? 'bg-red-500 text-white'
-                : h.score >= 3 ? 'bg-orange-500 text-white'
+              // 新スケール(威力/防御/ボーナス含む)に合わせた閾値
+              const scoreCls = h.score >= 12 ? 'bg-red-700 text-white'
+                : h.score >= 7 ? 'bg-red-500 text-white'
+                : h.score >= 4 ? 'bg-orange-500 text-white'
+                : h.score >= 2 ? 'bg-amber-200 text-amber-900'
                 : 'bg-gray-200 text-gray-700';
               const it = ITEM_MAP[h.userItem];
               const showItemBoost = (h.itemF && h.itemF !== 1);
               const statLabel = h.moveCat === '物' ? 'A' : (h.moveCat === '特' ? 'C' : '');
-              const statVal = h.userStats && h.moveCat ? (h.moveCat === '物' ? h.userStats[0] : h.userStats[1]) : null;
+              const statVal = h.userStats && h.moveCat ? (h.moveCat === '物' ? h.userStats.atk : h.userStats.spa) : null;
               return (
                 <div key={i} className="flex items-center gap-1 text-xs flex-wrap">
                   <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${scoreCls}`} title={`総合スコア ${h.score.toFixed(2)}`}>
@@ -1141,6 +1393,16 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
                       {it.emoji}×{h.itemF}
                     </span>
                   )}
+                  {h.priority > 0 && (
+                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-sky-200 text-sky-900"
+                      title={`先制技 優先度+${h.priority}`}>先+{h.priority}</span>
+                  )}
+                  {h.dmgPct > 0 && (
+                    <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${h.dmgPct >= 100 ? 'bg-red-600 text-white' : h.dmgPct >= 60 ? 'bg-red-300 text-red-900' : 'bg-gray-100 text-gray-700'}`}
+                      title={`与ダメ期待値 ${h.dmgPct}%（HP100基準の粗見積り）`}>
+                      約{h.dmgPct}%
+                    </span>
+                  )}
                   <span className="truncate flex-1 min-w-0">
                     <span className="font-medium">{h.userJp}</span>
                     <span className="text-gray-500"> / {h.moveName}</span>
@@ -1162,30 +1424,75 @@ function AnalysisPanel({userTeam, opponents}) {
   const opps = opponents.filter(Boolean);
   const ready = users.length >= 1 && opps.length >= 1;
 
-  // 推奨選出3体（全探索）
+  // 推奨選出3体（全探索 + 総合マッチアップ + 多様性）
   const trio = useMemo(() => {
     if (users.length < 3 || opps.length === 0) return null;
     const combos = combinations(users, 3);
+    // マッチアップスコアのキャッシュ
+    const cache = new Map();
+    const ms = (u, o) => {
+      const key = `${u.id}|${o.id}`;
+      if (!cache.has(key)) cache.set(key, matchupScore(u, o));
+      return cache.get(key);
+    };
     let best = null;
     for (const combo of combos) {
-      let covered = 0, scoreSum = 0;
-      for (const opp of opps) {
-        const hits = combo.map(u => bestHitScore(u, opp).score);
-        const mx = Math.max(...hits);
-        if (mx >= 2) covered++;
-        scoreSum += mx;
-      }
-      if (!best || covered > best.covered || (covered===best.covered && scoreSum > best.scoreSum)) {
-        best = {combo, covered, scoreSum};
+      // 各敵に対する最良担当者を決定
+      const perOpp = opps.map(o => {
+        let bestIdx = 0, bestTotal = -Infinity, bestMS = null;
+        combo.forEach((u, i) => {
+          const m = ms(u, o);
+          if (m.total > bestTotal) { bestTotal = m.total; bestIdx = i; bestMS = m; }
+        });
+        return {opp:o, bestIdx, bestTotal, bestMS};
+      });
+      // 基礎スコア: 各敵への最良マッチアップの合計
+      const baseScore = perOpp.reduce((s,p)=>s+p.bestTotal, 0);
+      // 担当分散ボーナス（複数体で敵をカバーしている）
+      const assignedIdx = new Set(perOpp.map(p=>p.bestIdx));
+      const distributionBonus = assignedIdx.size * 0.4;
+      // タイプ多様性ボーナス
+      const typeSet = new Set();
+      combo.forEach(u => u.types.forEach(t => typeSet.add(t)));
+      const diversityBonus = Math.min(typeSet.size, 6) * 0.12;
+      // 素早さ帯分散ボーナス（速・中・遅でカバー）
+      const speeds = combo.map(u => effectiveSpeed(u));
+      const spdTiers = new Set(speeds.map(s => s >= 110 ? 'fast' : s >= 80 ? 'mid' : 'slow'));
+      const speedBonus = spdTiers.size * 0.15;
+      // 重複タイプ組ペナルティ
+      const typeKeys = combo.map(u => [...u.types].sort().join(','));
+      const dupPenalty = (typeKeys.length - new Set(typeKeys).size) * 0.6;
+      // 抜群担当数
+      const covered = perOpp.filter(p => (p.bestMS?.off?.mult || 0) >= 2).length;
+      // 有効打保持（正のtotal）を持つ敵の数
+      const positiveCount = perOpp.filter(p => p.bestTotal > 0).length;
+      const positiveBonus = positiveCount * 0.25;
+      const total = baseScore + distributionBonus + diversityBonus + speedBonus - dupPenalty + positiveBonus;
+      if (!best || total > best.total) {
+        best = {combo, total, covered, baseScore, perOpp, distributionBonus, diversityBonus, speedBonus, dupPenalty, positiveBonus, typeCount: typeSet.size, tierCount: spdTiers.size};
       }
     }
     return best;
   }, [userTeam, opponents]);
 
-  // マトリクス
+  // マトリクス（マッチアップスコア: 攻撃 - 脅威*0.7 + 速度ボーナス）
   const matrix = useMemo(() => {
-    return users.map(u => opps.map(o => bestHitScore(u, o)));
+    return users.map(u => opps.map(o => matchupScore(u, o)));
   }, [userTeam, opponents]);
+
+  // 敵ごとの最大脅威（マトリクスから集計: 自軍のどれかが受ける最大ダメ予測）
+  const oppThreats = useMemo(() => {
+    return opps.map((o, oi) => {
+      let maxThreat = 0, maxDmgPct = 0;
+      users.forEach((u, ui) => {
+        const m = matrix[ui]?.[oi];
+        if (!m) return;
+        if (m.thr?.threat > maxThreat) maxThreat = m.thr.threat;
+        if (m.thr?.dmgPct > maxDmgPct) maxDmgPct = m.thr.dmgPct;
+      });
+      return {threat:maxThreat, dmgPct:maxDmgPct};
+    });
+  }, [matrix, opponents]);
 
   // 共通弱点ランキング
   const commonWeak = useMemo(() => {
@@ -1221,15 +1528,31 @@ function AnalysisPanel({userTeam, opponents}) {
 
   if (!ready) return null;
 
-  const scoreColor = (s) => {
-    if (s >= 6) return 'bg-red-600 text-white';
-    if (s >= 4) return 'bg-red-500 text-white';
-    if (s >= 2.5) return 'bg-orange-500 text-white';
-    if (s >= 1) return 'bg-gray-200 text-gray-700';
-    if (s > 0) return 'bg-blue-400 text-white';
-    return 'bg-gray-800 text-white';
+  // 総合マッチアップの色分け（高=有利・緑 / 低=不利・赤）
+  const matchupColor = (s) => {
+    if (s >= 5) return 'bg-green-700 text-white';
+    if (s >= 3) return 'bg-green-500 text-white';
+    if (s >= 1.5) return 'bg-emerald-300 text-emerald-900';
+    if (s >= 0) return 'bg-gray-100 text-gray-700';
+    if (s >= -2) return 'bg-orange-400 text-white';
+    return 'bg-red-600 text-white';
   };
-  const fmt = s => s===0?'0':(s>=1?(s%1===0?s.toString():s.toFixed(1)):(s.toString().replace('0.','.')));
+  // 脅威の色分け（敵がこちらに与える被弾予測）
+  const threatColor = (t) => {
+    if (t >= 5) return 'bg-red-700 text-white';
+    if (t >= 3) return 'bg-red-500 text-white';
+    if (t >= 1.5) return 'bg-orange-400 text-white';
+    return 'bg-gray-200 text-gray-600';
+  };
+  const fmt = s => {
+    if (s === 0) return '0';
+    const abs = Math.abs(s);
+    const sign = s < 0 ? '-' : '';
+    if (abs >= 1) return sign + (abs % 1 === 0 ? abs.toString() : abs.toFixed(1));
+    // 1未満の正数は ".5" と簡略化、負数は可読性重視で "-0.5" のまま
+    if (s < 0) return sign + abs.toFixed(1);
+    return abs.toFixed(1).replace(/^0/,'');
+  };
 
   return (
     <div className="bg-white border rounded-lg mb-3">
@@ -1243,40 +1566,68 @@ function AnalysisPanel({userTeam, opponents}) {
           {users.length >= 3 && trio && (
             <div>
               <div className="text-xs font-bold text-gray-600 mb-1.5">
-                ⭐ 推奨選出3体（{trio.covered}/{opps.length}体抑制・合計スコア{trio.scoreSum.toFixed(1)}）
+                ⭐ 推奨選出3体（抜群{trio.covered}/{opps.length}・総合{trio.total.toFixed(1)}）
               </div>
               <div className="flex gap-2 flex-wrap">
-                {trio.combo.map((u,i) => (
-                  <div key={i} className="border rounded p-1.5 bg-blue-50 flex items-center gap-1.5">
-                    <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-10 h-10 object-contain" />
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold truncate max-w-[100px]">{u.jp}</div>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)}</span>
-                        <ItemBadge itemId={u.item} compact />
+                {trio.combo.map((u,i) => {
+                  // 担当している敵を抽出
+                  const assigned = trio.perOpp.filter(p => p.bestIdx === i);
+                  return (
+                    <div key={i} className="border rounded p-1.5 bg-blue-50 flex items-center gap-1.5">
+                      <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-10 h-10 object-contain" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold truncate max-w-[100px]">{u.jp}</div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)}</span>
+                          <ItemBadge itemId={u.item} compact />
+                        </div>
+                        {assigned.length > 0 && (
+                          <div className="text-[9px] text-blue-700 mt-0.5 truncate max-w-[140px]"
+                            title={assigned.map(a=>`${a.opp.jp} (総合${a.bestTotal.toFixed(1)})`).join('\n')}>
+                            🎯 {assigned.map(a=>a.opp.jp).join('・')}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+              </div>
+              <div className="mt-1.5 text-[10px] text-gray-500 leading-snug">
+                選出理由:
+                <span className="ml-1">
+                  タイプ{trio.typeCount}種 / 速度帯{trio.tierCount}段 / 担当分散 +{trio.distributionBonus.toFixed(2)}
+                  {trio.dupPenalty > 0 && <span className="text-red-500"> / 重複 -{trio.dupPenalty.toFixed(1)}</span>}
+                </span>
               </div>
             </div>
           )}
 
-          {/* マトリクス 6x6 */}
+          {/* マトリクス: 総合マッチアップスコア（攻撃 - 脅威*0.7 + 速度） */}
           <div>
-            <div className="text-xs font-bold text-gray-600 mb-1.5">🔲 相性マトリクス（一致+AC種族値+持ち物込み総合スコア）</div>
+            <div className="text-xs font-bold text-gray-600 mb-1.5">
+              🔲 相性マトリクス（攻撃×種族値×持ち物 − 被弾予測 + 素早さ補正）
+            </div>
             <div className="overflow-x-auto">
               <table className="text-xs border-collapse">
                 <thead>
                   <tr>
                     <th className="p-1 border bg-gray-50"></th>
-                    {opps.map((o,i) => (
-                      <th key={i} className="p-1 border bg-gray-50 text-center">
-                        <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-8 h-8 object-contain mx-auto" />
-                        <div className="text-[9px] truncate max-w-[60px]">{o.jp}</div>
-                        <div className="text-[9px] text-gray-500">S{effectiveSpeed(o)||'?'}</div>
-                      </th>
-                    ))}
+                    {opps.map((o,i) => {
+                      const thr = oppThreats[i] || {threat:0, dmgPct:0};
+                      return (
+                        <th key={i} className={`p-1 border text-center ${thr.threat >= 3 ? 'bg-red-50' : 'bg-gray-50'}`}>
+                          <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-8 h-8 object-contain mx-auto" />
+                          <div className="text-[9px] truncate max-w-[60px]">{o.jp}</div>
+                          <div className="text-[9px] text-gray-500">S{effectiveSpeed(o)||'?'}</div>
+                          {thr.threat > 0 && (
+                            <div className={`text-[9px] font-bold px-0.5 rounded inline-block ${threatColor(thr.threat)}`}
+                              title={`最大被弾予測 ${thr.dmgPct}%`}>
+                              ⚡{thr.dmgPct}%
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -1295,21 +1646,34 @@ function AnalysisPanel({userTeam, opponents}) {
                         </div>
                       </td>
                       {opps.map((o,oi) => {
-                        const h = matrix[ui][oi];
+                        const m = matrix[ui][oi];
+                        const h = m.off; // 攻撃側内訳
+                        const t = m.thr; // 脅威側内訳
                         const us = effectiveSpeed(u), os = effectiveSpeed(o);
                         const spdMark = us > os ? '先' : us < os ? '後' : '=';
                         const spdCls = us > os ? 'text-green-700 bg-green-100' : us < os ? 'text-red-700 bg-red-100' : 'text-gray-500 bg-gray-100';
-                        const tip = h.mv
-                          ? `${h.mv.name||'(無名)'} (${h.mv.cat||'?'})\n倍率×${h.mult} × 一致${h.stab?'1.5':'1'} × AC補正${h.offF.toFixed(2)} × 持ち物${h.itemF.toFixed(2)}\n= ${h.score.toFixed(2)}`
-                          : '有効打なし';
+                        const offTip = h?.mv
+                          ? `🗡 ${h.mv.name||'(無名)'} (${h.mv.cat||'?'})\n  倍率×${h.mult} 一致${h.stab?'1.5':'1'} 攻${h.offF.toFixed(2)} 防${h.defF.toFixed(2)} 威${h.powF.toFixed(2)} 持${h.itemF.toFixed(2)}\n  = 攻撃${h.score.toFixed(2)} (≈${h.dmgPct}%ダメ)`
+                          : '🗡 有効打なし';
+                        const thrTip = t?.type
+                          ? `🛡 敵の想定打点: ${TYPE_JP[t.type]||t.type} ${t.cat||''}技\n  倍率×${t.mult} 被弾予測${t.dmgPct}% → 脅威${t.threat.toFixed(2)}`
+                          : '';
+                        const spdTip = `⚡ 素早さ: 自${us} vs 敵${os} → ${spdMark} (補正${m.speed.toFixed(2)})`;
+                        const tip = `総合 ${m.total.toFixed(2)} = 攻撃${m.offense.toFixed(2)} − 脅威${m.threat.toFixed(2)}×0.7 + 速度${m.speed.toFixed(2)}\n\n${offTip}\n${thrTip}\n${spdTip}`;
                         return (
-                          <td key={oi} className={`p-1 border text-center font-bold ${scoreColor(h.score)}`} title={tip}>
-                            <div>{fmt(h.score)}×</div>
+                          <td key={oi} className={`p-1 border text-center font-bold ${matchupColor(m.total)}`} title={tip}>
+                            <div>{fmt(m.total)}</div>
                             <div className="flex gap-0.5 justify-center items-center text-[8px] font-normal mt-0.5">
-                              {h.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一</span>}
-                              {h.itemF > 1 && <span className="px-0.5 rounded bg-amber-200 text-amber-900">持</span>}
+                              {h?.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一</span>}
+                              {h?.itemF > 1 && <span className="px-0.5 rounded bg-amber-200 text-amber-900">持</span>}
+                              {h?.priority > 0 && <span className="px-0.5 rounded bg-sky-200 text-sky-900">先制</span>}
                               <span className={`px-0.5 rounded ${spdCls}`}>{spdMark}</span>
                             </div>
+                            {h?.dmgPct > 0 && (
+                              <div className="text-[8px] font-normal opacity-90">
+                                {h.dmgPct}%
+                              </div>
+                            )}
                           </td>
                         );
                       })}
@@ -1317,6 +1681,9 @@ function AnalysisPanel({userTeam, opponents}) {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="text-[10px] text-gray-500 mt-1">
+              ⚡% は被弾最大予測（敵の想定一致技）、総合スコア上の% は最大攻撃での与ダメ予測。
             </div>
           </div>
 
