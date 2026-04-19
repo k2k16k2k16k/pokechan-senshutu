@@ -596,6 +596,69 @@ const MOVE_DATA = {
   'ハードプレス':{type:'steel',cat:'物'}, 'てっていこうげき':{type:'steel',cat:'物'},
   // --- 追加: フェアリー ---
   'フェアリーロック':{type:'fairy',cat:'変'}, 'アロマベール':{type:'fairy',cat:'変'},
+
+  // ====== v3.0 追加（Gen8-9 網羅 第二弾）======
+  // --- ノーマル ---
+  'スラッシュ':{type:'normal',cat:'物'}, 'ハイパードリル':{type:'normal',cat:'物'},
+  'ネコにこばん':{type:'normal',cat:'物'}, 'おさきにどうぞ':{type:'normal',cat:'変'},
+  'がむしゃら':{type:'normal',cat:'物'}, 'さばきのつぶて':{type:'normal',cat:'特'},
+  'ウェザーボール':{type:'normal',cat:'特'}, 'フラッシュ':{type:'normal',cat:'変'},
+  'ほごしょく':{type:'normal',cat:'変'}, 'まねっこ':{type:'normal',cat:'変'},
+  'がまん':{type:'normal',cat:'物'}, 'どろぼう':{type:'dark',cat:'物'},
+  'どろあそび':{type:'ground',cat:'変'}, 'にらみつける':{type:'normal',cat:'変'},
+  'めざましビンタ':{type:'fighting',cat:'物'}, 'ねがいごと':{type:'normal',cat:'変'},
+  'おまじない':{type:'normal',cat:'変'}, 'ビルドアップ':{type:'fighting',cat:'変'},
+  'うそなき':{type:'dark',cat:'変'},
+  // --- 炎 ---
+  'ブラストバーン':{type:'fire',cat:'特'}, 'フレアストーム':{type:'fire',cat:'特'},
+  'シェルガンちょう':{type:'fire',cat:'特'}, 'やきつくす':{type:'fire',cat:'特'},
+  // --- 水 ---
+  'ウェーブタックル':{type:'water',cat:'物'}, 'クイックターン':{type:'water',cat:'物'},
+  'ハイドロスチーム':{type:'water',cat:'特'}, 'オクタンほう':{type:'water',cat:'特'},
+  'エラがみ':{type:'water',cat:'物'},
+  // --- 電気 ---
+  'パラボラチャージ':{type:'electric',cat:'特'}, 'エレキドリフト':{type:'electric',cat:'物'},
+  'ソウルクラッシュ':{type:'electric',cat:'特'},
+  // --- 草 ---
+  'ハードプラント':{type:'grass',cat:'特'}, 'ニードルアーム':{type:'grass',cat:'物'},
+  'くさわけ':{type:'grass',cat:'物'}, 'おはなばたけ':{type:'grass',cat:'変'},
+  'ハナふぶき':{type:'grass',cat:'特'}, 'ドラムアタック':{type:'grass',cat:'物'},
+  // --- こおり ---
+  'アイスハンマー':{type:'ice',cat:'物'}, 'こごえるせかい':{type:'ice',cat:'特'},
+  'マウンテンガスト':{type:'ice',cat:'物'},
+  // --- 格闘 ---
+  'アクセルブレイク':{type:'fighting',cat:'物'}, 'じごくぐるま':{type:'fighting',cat:'物'},
+  'リベンジ':{type:'fighting',cat:'物'},
+  // --- 毒 ---
+  'ダイオキシン':{type:'poison',cat:'特'}, 'どくばり':{type:'poison',cat:'物'},
+  // --- 地面 ---
+  'ふみつける':{type:'normal',cat:'物'}, 'ぬまちにはまる':{type:'water',cat:'変'},
+  'すなのちから':{type:'ground',cat:'特'},
+  // --- 飛行 ---
+  'そらをとぶ':{type:'flying',cat:'物'}, 'フェザーダンス':{type:'flying',cat:'変'},
+  // --- エスパー ---
+  'みかづきのぶまい':{type:'psychic',cat:'変'}, 'サイドチェンジ':{type:'psychic',cat:'変'},
+  'ラスターパージ':{type:'psychic',cat:'特'}, 'スキルスワップ':{type:'psychic',cat:'変'},
+  'アシストパワー':{type:'psychic',cat:'特'}, 'いやしのはどう':{type:'psychic',cat:'変'},
+  // --- 虫 ---
+  'クモのいと':{type:'bug',cat:'変'}, 'ダブルニードル':{type:'bug',cat:'物'},
+  'ほっぺすりすり':{type:'electric',cat:'物'},
+  // --- ゴースト ---
+  'おはかまいり':{type:'ghost',cat:'物'}, 'かなしばり':{type:'normal',cat:'変'},
+  'ゴーストダイブ':{type:'ghost',cat:'物'}, 'うらみ':{type:'ghost',cat:'変'},
+  // --- ドラゴン ---
+  'ダイマックスほう':{type:'dragon',cat:'特'}, 'クラブハンマー':{type:'water',cat:'物'},
+  // --- 悪 ---
+  'ドゲザン':{type:'dark',cat:'物'}, 'はたきおとす':{type:'dark',cat:'物'},
+  'すてぜりふ':{type:'dark',cat:'変'}, 'つけあがる':{type:'dark',cat:'物'},
+  'あくのなみだ':{type:'dark',cat:'変'}, 'おだてる':{type:'dark',cat:'変'},
+  // --- 鋼 ---
+  'アイアンローラー':{type:'steel',cat:'物'}, 'シャドーボーン':{type:'ghost',cat:'物'},
+  'メタルサウンド':{type:'steel',cat:'変'},
+  // --- フェアリー ---
+  'あまえる':{type:'fairy',cat:'変'}, 'きらめくほう':{type:'fairy',cat:'物'},
+  'くさのちかい':{type:'grass',cat:'特'}, 'みずのちかい':{type:'water',cat:'特'},
+  'ほのおのちかい':{type:'fire',cat:'特'}, 'てんのめぐみ':{type:'normal',cat:'変'},
 };
 
 // 技名からタイプ・分類を推論（MOVE_DATAにあれば優先、なければnull）
@@ -948,6 +1011,101 @@ const ABILITIES = [
   {id:'ノーガード', jp:'ノーガード', group:'special', desc:'お互いの技が必中'},
   {id:'きょううん', jp:'きょううん', group:'special', desc:'急所ランク+1'},
   {id:'いしあたま', jp:'いしあたま', group:'special', desc:'反動ダメージ無効'},
+
+  // ====== v3.0 追加（Gen8-9 網羅 第二弾）======
+  // --- 接触反撃/接触状態異常 ---
+  {id:'さめはだ', jp:'さめはだ', group:'defense', typeAffinity:['water','dark','dragon'], desc:'接触攻撃を受けると相手HP1/8減'},
+  {id:'てつのトゲ', jp:'てつのトゲ', group:'defense', typeAffinity:['steel','grass'], desc:'接触攻撃を受けると相手HP1/8減'},
+  {id:'どくのトゲ', jp:'どくのトゲ', group:'special', typeAffinity:['poison','bug'], desc:'接触で30%どく'},
+  {id:'ほのおのからだ', jp:'ほのおのからだ', group:'special', typeAffinity:['fire','bug'], desc:'接触で30%やけど'},
+  {id:'せいでんき', jp:'せいでんき', group:'special', typeAffinity:['electric'], desc:'接触で30%まひ'},
+  {id:'どくしゅ', jp:'どくしゅ', group:'special', typeAffinity:['poison'], desc:'自分の接触技で30%どく'},
+  {id:'メロメロボディ', jp:'メロメロボディ', group:'special', typeAffinity:['normal','fairy','psychic'], desc:'接触で30%メロメロ'},
+  {id:'ぶきよう', jp:'ぶきよう', group:'special', desc:'道具の効果を発揮できない'},
+  // --- タイプ威力補正 ---
+  {id:'トランジスタ', jp:'トランジスタ', group:'boost', boostMul:1.3, typeAffinity:['electric'], desc:'でんき技×1.3'},
+  {id:'りゅうのあぎと', jp:'りゅうのあぎと', group:'boost', boostMul:1.5, typeAffinity:['dragon'], desc:'ドラゴン技×1.5'},
+  {id:'はがねのせいしん', jp:'はがねのせいしん', group:'boost', boostMul:1.5, typeAffinity:['steel'], desc:'味方含めはがね技×1.5'},
+  {id:'きれあじ', jp:'きれあじ', group:'boost', boostMul:1.5, desc:'切る技×1.5'},
+  {id:'ごりむちゅう', jp:'ごりむちゅう', group:'boost', boostMul:1.5, condition:'physical', desc:'物理×1.5・技ロック'},
+  {id:'むらっけ', jp:'ムラっけ(改)', group:'special', desc:'毎ターン能力乱上下'},
+  // --- タイプ変化 ---
+  {id:'リベロ', jp:'リベロ', group:'special', desc:'使用技のタイプに自分が変化(STAB常時)'},
+  {id:'へんげんじざい', jp:'へんげんじざい', group:'special', desc:'使用技のタイプに自分が変化(STAB常時)'},
+  {id:'うるおいボイス', jp:'うるおいボイス', group:'special', typeAffinity:['water','fairy'], desc:'音技がみずタイプに'},
+  {id:'ノーマルスキン', jp:'ノーマルスキン', group:'special', typeAffinity:['normal'], desc:'全技をノーマル化・×1.2'},
+  // --- 接触回避 ---
+  {id:'えんかく', jp:'えんかく', group:'special', desc:'全攻撃が非接触扱い'},
+  // --- 反撃/KO時バフ ---
+  {id:'いかりのつぼ', jp:'いかりのつぼ', group:'boost', desc:'急所被弾で攻撃+6'},
+  {id:'じしんかじょう', jp:'じしんかじょう', group:'boost', desc:'相手をひんしにすると攻撃+1'},
+  {id:'ソウルハート', jp:'ソウルハート', group:'boost', desc:'味方ひんしで特攻+1'},
+  {id:'しろのいななき', jp:'しろのいななき', group:'boost', desc:'相手ひんしで特攻+1'},
+  {id:'くろのいななき', jp:'くろのいななき', group:'boost', desc:'相手ひんしで攻撃+1'},
+  {id:'きんしのちから', jp:'きんしのちから', group:'boost', desc:'相手ひんしで最高ステが+1'},
+  // --- 1回耐える/フォルム ---
+  {id:'ばけのかわ', jp:'ばけのかわ', group:'defense', typeAffinity:['ghost','fairy'], desc:'1度だけダメを無効化(代償HP1/8)'},
+  {id:'アイスフェイス', jp:'アイスフェイス', group:'defense', typeAffinity:['ice'], desc:'1度だけ物理無効化(氷→霰で復活)'},
+  {id:'ぜんしんきょうか', jp:'ぜんしんきょうか', group:'defense', desc:'能力ダウン無効'},
+  // --- 登場時バフ/デバフ ---
+  {id:'ふとうふくつ', jp:'ふとうのたて', group:'boost', desc:'登場時 防御+1'},
+  {id:'ふくつのたて', jp:'ふくつのたて', group:'boost', desc:'登場時 防御+1'},
+  {id:'ふとうのけん', jp:'ふとうのけん', group:'boost', desc:'登場時 攻撃+1'},
+  {id:'しょうりのまい', jp:'しょうりのまい', group:'boost', desc:'相手ひんし時 攻撃+1,防御+1,素早+1'},
+  {id:'バッドインフルエンス', jp:'バッドインフルエンス', group:'boost', desc:'登場時 相手特攻↓'},
+  {id:'ミラーアーマー', jp:'ミラーアーマー', group:'defense', typeAffinity:['steel','flying'], desc:'能力↓を相手に跳ね返す'},
+  {id:'かんげき', jp:'かんげき', group:'defense', desc:'被弾で防御+1'},
+  {id:'ちどりあし', jp:'ちどりあし', group:'defense', desc:'こんらん中 被弾率↓'},
+  {id:'きよめのしお', jp:'きよめのしお', group:'defense', desc:'状態異常無効・ゴースト被ダメ半減'},
+  {id:'ふしぎなまもり', jp:'ふしぎなまもり', group:'defense', desc:'効果抜群技以外を無効化'},
+  {id:'リーフガード', jp:'リーフガード', group:'defense', condition:'sun', typeAffinity:['grass'], desc:'晴れ時 状態異常無効'},
+  // --- フィールド/天候発動 ---
+  {id:'サイコメーカー', jp:'サイコメーカー', group:'weather', typeAffinity:['psychic','fairy'], desc:'登場時 サイコフィールド'},
+  {id:'エレキメーカー', jp:'エレキメーカー', group:'weather', typeAffinity:['electric'], desc:'登場時 エレキフィールド'},
+  {id:'グラスメーカー', jp:'グラスメーカー', group:'weather', typeAffinity:['grass'], desc:'登場時 グラスフィールド'},
+  {id:'ミストメーカー', jp:'ミストメーカー', group:'weather', typeAffinity:['fairy'], desc:'登場時 ミストフィールド'},
+  {id:'エアロック', jp:'エアロック', group:'weather', desc:'場の天候効果を消す'},
+  {id:'ノーてんき', jp:'ノーてんき', group:'weather', desc:'場の天候効果を消す'},
+  {id:'おひさまピカピカ', jp:'おひさまピカピカ', group:'weather', weather:'sun', typeAffinity:['fire','normal'], desc:'登場時 晴れ(5ターン)'},
+  {id:'あめふらしき', jp:'あまあがり', group:'weather', desc:'登場時の天候を回収'},
+  // --- 二人組/性別 ---
+  {id:'プラス', jp:'プラス', group:'boost', typeAffinity:['electric'], desc:'味方にマイナスがいると特攻×1.5'},
+  {id:'マイナス', jp:'マイナス', group:'boost', typeAffinity:['electric'], desc:'味方にプラスがいると特攻×1.5'},
+  {id:'とうそうしん', jp:'とうそうしん', group:'special', desc:'同性×1.25/異性×0.75'},
+  // --- 情報/コピー/奪う ---
+  {id:'おみとおし', jp:'おみとおし', group:'special', desc:'登場時 相手の持ち物を看破'},
+  {id:'トレース', jp:'トレース', group:'special', desc:'相手のとくせいをコピー'},
+  {id:'かわりもの', jp:'かわりもの', group:'special', desc:'登場時 相手にへんしん'},
+  {id:'ねんちゃく', jp:'ねんちゃく', group:'special', desc:'道具を奪われない'},
+  {id:'ミイラ', jp:'ミイラ', group:'special', desc:'接触攻撃者のとくせいをミイラに'},
+  {id:'でんじゆうどう', jp:'でんじゆうどう', group:'special', desc:'接触攻撃者のとくせいを伝染'},
+  // --- 状態/行動安定 ---
+  {id:'せいしんりょく', jp:'せいしんりょく', group:'special', desc:'ひるみ無効・いかく無効'},
+  {id:'いやしのこころ', jp:'いやしのこころ', group:'special', desc:'味方の状態異常を30%で回復'},
+  {id:'しぜんはかい', jp:'しぜんはかい', group:'special', desc:'交代時 場の状態効果を消す'},
+  {id:'あまのじゃく', jp:'あまのじゃく', group:'special', desc:'自分の能力変化を逆転'},
+  {id:'スロースタート', jp:'スロースタート', group:'special', desc:'登場5ターンは攻撃/素早半減'},
+  // --- 多段/連撃 ---
+  {id:'おやこあい', jp:'おやこあい', group:'special', desc:'1技を2回攻撃(2回目は25%)'},
+  {id:'スキルリンク', jp:'スキルリンク', group:'special', desc:'連続技が常に最大回数'},
+  {id:'ちからずく改', jp:'いかりのつるぎ', group:'special', desc:'剣技×1.5'},
+  // --- バトルフロー ---
+  {id:'すりぬけ', jp:'すりぬけ', group:'special', desc:'かべ/まもる等を貫通'},
+  {id:'マイティチェンジ', jp:'ばんけん', group:'special', desc:'いかく反射で攻撃+1'},
+  {id:'ぎょぐん', jp:'ぎょぐん', group:'special', desc:'HP1/4以下でフォルム変化'},
+  // --- その他 ---
+  {id:'クリアボディ', jp:'クリアボディ', group:'defense', desc:'能力↓無効'},
+  {id:'しろいけむり', jp:'しろいけむり', group:'defense', desc:'能力↓無効'},
+  {id:'かいりきバサミ', jp:'かいりきバサミ', group:'defense', desc:'攻撃↓無効'},
+  {id:'するどいめ', jp:'するどいめ', group:'defense', desc:'命中↓無効'},
+  {id:'かちいくさ', jp:'かちいくさ', group:'boost', desc:'相手ひんしで攻撃+1,特攻+1,素早+1'},
+  {id:'ソーラーパワー改', jp:'ソーラーパワー', group:'boost', boostMul:1.5, condition:'sun', typeAffinity:['fire','grass'], desc:'晴れで特攻×1.5・毎ターン1/8減'},
+  {id:'アイスボディ2', jp:'アイスボディ(改)', group:'special', condition:'hail', typeAffinity:['ice'], desc:'雪/霰で毎ターン1/16回復'},
+  {id:'かたいツメ', jp:'かたいツメ', group:'boost', boostMul:1.3, desc:'接触技×1.3'},
+  {id:'ハッピーアワー', jp:'ハッピーアワー', group:'special', desc:'戦闘後の賞金2倍'},
+  {id:'でんそうし', jp:'てんきや', group:'weather', desc:'天候や場でフォルム変化'},
+  {id:'ロックスキン', jp:'ロックスキン', group:'defense', typeAffinity:['rock'], desc:'急所無効'},
+  {id:'まとい', jp:'ひらひら', group:'defense', desc:'能力↓を無効化'},
 ];
 const ABILITY_MAP = Object.fromEntries(ABILITIES.map(a => [a.id, a]));
 
@@ -1113,6 +1271,53 @@ const MOVE_BP = {
   'フェアリーロック':0,'アロマベール':0,
   // その他
   'こうそくいどう':0,
+
+  // ====== v3.0 追加 BP ======
+  // ノーマル
+  'スラッシュ':70,'ハイパードリル':100,'ネコにこばん':40,'おさきにどうぞ':0,
+  'がむしゃら':0,'さばきのつぶて':100,'ウェザーボール':50,'フラッシュ':0,
+  'ほごしょく':0,'まねっこ':0,'がまん':0,'どろぼう':60,'どろあそび':0,
+  'にらみつける':0,'めざましビンタ':70,'ねがいごと':0,'おまじない':0,
+  'うそなき':0,
+  // 炎
+  'ブラストバーン':150,'フレアストーム':95,'シェルガンちょう':150,'やきつくす':70,
+  // 水
+  'ウェーブタックル':120,'クイックターン':60,'ハイドロスチーム':80,
+  'オクタンほう':65,'エラがみ':85,
+  // 電気
+  'パラボラチャージ':65,'エレキドリフト':100,'ソウルクラッシュ':75,
+  // 草
+  'ハードプラント':150,'ニードルアーム':60,'くさわけ':50,'おはなばたけ':0,
+  'ハナふぶき':90,'ドラムアタック':80,
+  // こおり
+  'アイスハンマー':100,'こごえるせかい':65,'マウンテンガスト':75,
+  // 格闘
+  'アクセルブレイク':100,'じごくぐるま':80,'みちづれ':0,'リベンジ':60,
+  // 毒
+  'ダイオキシン':70,'どくばり':50,
+  // 地面
+  'ふみつける':65,'ぬまちにはまる':0,'すなのちから':0,
+  // 飛行
+  'そらをとぶ':90,'フェザーダンス':0,
+  // エスパー
+  'みかづきのぶまい':0,'サイドチェンジ':0,'ラスターパージ':95,'スキルスワップ':0,
+  'アシストパワー':20,'いやしのはどう':0,'サイケこうせん':65,
+  // 虫
+  'クモのいと':0,'ダブルニードル':25,
+  // 岩
+  'げんしのちから':60,'ロックブラスト':25,
+  // ゴースト
+  'おはかまいり':50,'かなしばり':0,'ゴーストダイブ':90,'うらみ':0,
+  // ドラゴン
+  'ダイマックスほう':130,'クラブハンマー':100,
+  // 悪
+  'ドゲザン':85,'はたきおとす':65,'すてぜりふ':0,'つけあがる':75,
+  'あくのなみだ':0,'おだてる':0,
+  // 鋼
+  'アイアンローラー':130,'シャドーボーン':85,'メタルサウンド':0,
+  // フェアリー
+  'あまえる':0,'きらめくほう':80,'くさのちかい':80,'みずのちかい':80,
+  'ほのおのちかい':80,'てんのめぐみ':0,
 };
 
 // 命中率（未登録は 100 扱い、0 は変化技のため無効化扱い）
@@ -1132,6 +1337,12 @@ const MOVE_ACCURACY = {
   'ハードプレス':100,'ぶちかまし':100,'シェルアームズ':100,
   'シードフレア':85,'マグマストーム':75,'おにび':85,'ねむりごな':75,
   'しびれごな':75,'キノコのほうし':75,'ハリケーン':70,
+  // v3.0
+  'ハイパードリル':100,'クモのいと':95,'フェザーダンス':100,
+  'ウェーブタックル':100,'クイックターン':100,'ドゲザン':100,
+  'アクセルブレイク':100,'アイアンローラー':100,'ブラストバーン':90,
+  'ハードプラント':90,'ラスターパージ':100,'さばきのつぶて':100,
+  'どろぼう':100,'はたきおとす':100,'かなしばり':100,
 };
 
 // 特殊な挙動を持つ技（固定ダメージ/多段/変動/カウンター/OHKO 等）
@@ -1207,6 +1418,17 @@ const MOVE_SPECIAL = {
   'ぶちかまし':    {kind:'conditional', baseBp:120, altBp:120, avgBp:120},
   // 一撃ではないが しおふき/ふんか は HP依存（保守的に半減扱い）
   'しおふき':      {kind:'conditional', baseBp:150, altBp:75, avgBp:90},
+  // ====== v3.0 追加 SPECIAL ======
+  // 多段
+  'ダブルニードル':  {kind:'multi', bp:25, avgHits:2},
+  // 割合・特殊
+  'がむしゃら':      {kind:'fraction', pct:50}, // 相手HPを自分のHPまで削る→保守的
+  'はたきおとす':    {kind:'conditional', baseBp:65, altBp:97, avgBp:82}, // 持ち物時×1.5
+  'つけあがる':      {kind:'conditional', baseBp:75, altBp:150, avgBp:100}, // 能力↓後2倍
+  'ウェザーボール':  {kind:'conditional', baseBp:50, altBp:100, avgBp:70}, // 天候時2倍
+  'アシストパワー':  {kind:'conditional', baseBp:20, altBp:120, avgBp:50}, // 能力↑で伸びる
+  'エラがみ':        {kind:'conditional', baseBp:85, altBp:170, avgBp:110}, // 先手2倍
+  'ハイドロスチーム':{kind:'conditional', baseBp:80, altBp:120, avgBp:95}, // 晴れ1.5倍
 };
 
 // 優先度のある技だけ記載（未登録は0扱い）
@@ -1219,6 +1441,10 @@ const MOVE_PRIORITY = {
   // 追加: 優先度持ち
   'ジェットパンチ':1,'かみなりあらし':1,'フェイント':2,'てだすけ':5,
   'みちづれ':0,'ほろびのうた':0,
+  // v3.0
+  'クイックターン':0,'すてぜりふ':0,'みかづきのぶまい':0,
+  'あまえる':0,'おさきにどうぞ':0,'サイドチェンジ':0,
+  'ねがいごと':0,
 };
 
 // ====== スコア計算エンジン（攻撃/防御/マッチアップ） ======
@@ -4969,7 +5195,7 @@ function App() {
       <div className="max-w-6xl mx-auto p-3 sm:p-4">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v2.9 技/特性大幅追加</span></h1>
+            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.0 Gen8-9網羅</span></h1>
             <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
           </div>
           <div className="flex flex-col items-end gap-1">
