@@ -4819,6 +4819,186 @@ function TeamSlotBar({teams, activeIdx, setActiveIdx, setTeams}) {
   );
 }
 
+// ====== 対戦ガイド用 詳細解析ヘルパー ======
+// 各攻撃/変化技を個別評価した配列を返す（ダメージ%・命中・優先度・ブロック）
+function perMoveAnalysis(userPoke, opp) {
+  if (!userPoke || !opp) return [];
+  const oppStats = getPokeStatsObj(opp.id);
+  const hpBase = oppStats?.hp || 80;
+  const out = [];
+  for (const mv of (userPoke.moves || [])) {
+    if (!mv || !mv.type) continue;
+    const priority = movePriority(mv);
+    const acc = (mv.accuracy != null && mv.accuracy > 0 && mv.accuracy <= 100)
+      ? mv.accuracy : (MOVE_ACCURACY[mv.name] ?? 100);
+    const bp = (mv.bp != null && mv.bp > 0) ? mv.bp : (MOVE_BP[mv.name] ?? null);
+    const stab = userPoke.types.includes(mv.type);
+    if (mv.cat === '変') {
+      out.push({mv, isStatus:true, priority, name:mv.name, type:mv.type, cat:mv.cat, acc, stab:false});
+      continue;
+    }
+    const mult = defensiveMult(mv.type, opp.types);
+    const abDefMul = abilityDefenseMult(opp, mv.type, mult, userPoke.ability);
+    if (mult === 0) {
+      out.push({mv, blocked:true, reason:'タイプ無効', stab, mult, priority, acc, bp, name:mv.name, type:mv.type, cat:mv.cat});
+      continue;
+    }
+    if (abDefMul === 0) {
+      out.push({mv, blocked:true, reason:`${opp.ability}無効`, stab, mult, priority, acc, bp, name:mv.name, type:mv.type, cat:mv.cat});
+      continue;
+    }
+    const offF = offensiveFactor(userPoke, mv);
+    const defF = defensiveFactor(opp, mv);
+    const powF = powerFactor(mv);
+    const itemF = itemFactor(userPoke, mv);
+    const bonus = multNonLinearBonus(mult);
+    const accF = accuracyFactor(mv);
+    const abF = abilityAttackMult(userPoke, mv);
+    const itemDefF = itemDefenseFactor(userPoke, opp, mv.type, mult);
+    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus * accF * abF * abDefMul * itemDefF;
+    const dmgPct = Math.min(300, Math.round(score * 3300 / hpBase));
+    out.push({mv, dmgPct, mult, stab, priority, acc, bp, score, name:mv.name, type:mv.type, cat:mv.cat, abDefMul, resistBonus: abDefMul < 1 ? abDefMul : null});
+  }
+  out.sort((a,b) => {
+    if (a.isStatus !== b.isStatus) return a.isStatus ? 1 : -1;
+    if (a.blocked !== b.blocked) return a.blocked ? 1 : -1;
+    return (b.dmgPct || 0) - (a.dmgPct || 0);
+  });
+  return out;
+}
+
+// 相手側の判明している技の、自軍への打点を算出
+function oppMoveAnalysis(opp, userPoke) {
+  if (!opp || !userPoke) return null;
+  const raw = (opp.moves || []).filter(m => m && m.type);
+  if (raw.length === 0) return null;
+  const userStats = getPokeStatsObj(userPoke.id);
+  const hpBase = userStats?.hp || 80;
+  const out = [];
+  for (const mv of raw) {
+    const priority = movePriority(mv);
+    const acc = (mv.accuracy != null && mv.accuracy > 0 && mv.accuracy <= 100)
+      ? mv.accuracy : (MOVE_ACCURACY[mv.name] ?? 100);
+    const stab = opp.types.includes(mv.type);
+    if (mv.cat === '変') {
+      out.push({mv, isStatus:true, priority, name:mv.name, type:mv.type, cat:mv.cat, acc, stab:false});
+      continue;
+    }
+    const mult = defensiveMult(mv.type, userPoke.types);
+    const abDefMul = abilityDefenseMult(userPoke, mv.type, mult, opp.ability);
+    if (mult === 0) {
+      out.push({mv, blocked:true, reason:'タイプ無効', stab, mult, priority, acc, name:mv.name, type:mv.type, cat:mv.cat});
+      continue;
+    }
+    if (abDefMul === 0) {
+      out.push({mv, blocked:true, reason:`${userPoke.ability}無効`, stab, mult, priority, acc, name:mv.name, type:mv.type, cat:mv.cat});
+      continue;
+    }
+    const offF = offensiveFactor(opp, mv);
+    const defF = defensiveFactor(userPoke, mv);
+    const powF = powerFactor(mv);
+    const itemF = itemFactor(opp, mv);
+    const bonus = multNonLinearBonus(mult);
+    const accF = accuracyFactor(mv);
+    const abF = abilityAttackMult(opp, mv);
+    const itemDefF = itemDefenseFactor(opp, userPoke, mv.type, mult);
+    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus * accF * abF * abDefMul * itemDefF;
+    const dmgPct = Math.min(300, Math.round(score * 3300 / hpBase));
+    out.push({mv, dmgPct, mult, stab, priority, acc, score, name:mv.name, type:mv.type, cat:mv.cat});
+  }
+  out.sort((a,b) => {
+    if (a.isStatus !== b.isStatus) return a.isStatus ? 1 : -1;
+    if (a.blocked !== b.blocked) return a.blocked ? 1 : -1;
+    return (b.dmgPct || 0) - (a.dmgPct || 0);
+  });
+  return out;
+}
+
+// 積み/補助技カタログ（対戦ガイドで有効活用を提案）
+const SETUP_MOVES = {
+  'つるぎのまい':{stat:'こうげき+2', icon:'⚔', cls:'text-red-700'},
+  'りゅうのまい':{stat:'こう+1/すば+1', icon:'🐉', cls:'text-red-700'},
+  'めいそう':{stat:'とく+1/とくぼ+1', icon:'🧘', cls:'text-blue-700'},
+  'わるだくみ':{stat:'とくこう+2', icon:'😈', cls:'text-blue-700'},
+  'ちょうのまい':{stat:'とく+1/とくぼ+1/すば+1', icon:'🦋', cls:'text-blue-700'},
+  'コスモパワー':{stat:'ぼう+1/とくぼ+1', icon:'🌌', cls:'text-gray-700'},
+  'バルクアップ':{stat:'こう+1/ぼう+1', icon:'💪', cls:'text-red-700'},
+  'ビルドアップ':{stat:'こう+1/ぼう+1', icon:'💪', cls:'text-red-700'},
+  'コットンガード':{stat:'ぼうぎょ+3', icon:'🧶', cls:'text-gray-700'},
+  'てっぺき':{stat:'ぼうぎょ+2', icon:'🛡', cls:'text-gray-700'},
+  'ドわすれ':{stat:'とくぼう+2', icon:'💭', cls:'text-blue-700'},
+  'からをやぶる':{stat:'こう+2/とく+2/すば+2/ぼう-1/とくぼ-1', icon:'💥', cls:'text-purple-700'},
+  'みがわり':{stat:'HP25%で身代わり', icon:'👥', cls:'text-gray-700'},
+  'ねむる':{stat:'HP全回復+2T眠り', icon:'😴', cls:'text-gray-700'},
+  'じこさいせい':{stat:'HP50%回復', icon:'💚', cls:'text-green-700'},
+  'タマゴうみ':{stat:'HP50%回復', icon:'💚', cls:'text-green-700'},
+  'つきのひかり':{stat:'HP回復(天候連動)', icon:'🌙', cls:'text-green-700'},
+  'あさのひざし':{stat:'HP回復(天候連動)', icon:'🌅', cls:'text-green-700'},
+  'こうごうせい':{stat:'HP回復(天候連動)', icon:'🌱', cls:'text-green-700'},
+  'はねやすめ':{stat:'HP50%回復', icon:'🪶', cls:'text-green-700'},
+  'ちょうはつ':{stat:'相手変化技封印', icon:'😤', cls:'text-orange-700'},
+  'でんじは':{stat:'相手マヒ', icon:'⚡', cls:'text-yellow-700'},
+  'どくどく':{stat:'相手もうどく', icon:'☠', cls:'text-purple-700'},
+  'おにび':{stat:'相手やけど', icon:'🔥', cls:'text-red-600'},
+  'あくび':{stat:'相手ねむけ', icon:'💤', cls:'text-gray-700'},
+  'こごえるかぜ':{stat:'相手すばやさ-1', icon:'🌬', cls:'text-cyan-700'},
+  'なきごえ':{stat:'相手こうげき-1', icon:'📢', cls:'text-gray-600'},
+  'おきみやげ':{stat:'相手こう/とく-2(自瀕死)', icon:'👋', cls:'text-purple-700'},
+  'しっぽきり':{stat:'HP半分で身代わり置き土産', icon:'🦎', cls:'text-gray-700'},
+  'ステルスロック':{stat:'岩まき(相手出し引きで削り)', icon:'🪨', cls:'text-orange-700'},
+  'まきびし':{stat:'撒きびし(地面ポケ削り)', icon:'🧷', cls:'text-orange-700'},
+  'どくびし':{stat:'毒びし(毒/猛毒)', icon:'🧪', cls:'text-purple-700'},
+  'ねばねばネット':{stat:'ねばねばネット(S-1)', icon:'🕸', cls:'text-cyan-700'},
+  'リフレクター':{stat:'物理半減5T', icon:'🟥', cls:'text-red-600'},
+  'ひかりのかべ':{stat:'特殊半減5T', icon:'🟦', cls:'text-blue-600'},
+  'オーロラベール':{stat:'物特半減5T(雪限定)', icon:'🌈', cls:'text-cyan-700'},
+  'トリックルーム':{stat:'5T素早さ逆転', icon:'🕳', cls:'text-purple-700'},
+  'あまごい':{stat:'天候あめ', icon:'🌧', cls:'text-blue-600'},
+  'にほんばれ':{stat:'天候ひざしがつよい', icon:'☀', cls:'text-amber-600'},
+  'すなあらし':{stat:'天候すなあらし', icon:'🌪', cls:'text-yellow-700'},
+  'ゆきげしき':{stat:'天候ゆき', icon:'❄', cls:'text-cyan-600'},
+  'エレキフィールド':{stat:'でんき強化/ねむり無効', icon:'⚡', cls:'text-yellow-700'},
+  'グラスフィールド':{stat:'くさ強化/HP小回復', icon:'🌿', cls:'text-green-700'},
+  'サイコフィールド':{stat:'エスパー強化/先制無効', icon:'🔮', cls:'text-pink-700'},
+  'ミストフィールド':{stat:'ドラゴン半減/状態異常無効', icon:'🌫', cls:'text-pink-300'},
+};
+
+// 積み窓口判定: 相手が低火力+自軍に積み技がある
+function setupOpportunity(userPoke, thr, race) {
+  if (!userPoke) return null;
+  const setups = (userPoke.moves || []).filter(m => m && SETUP_MOVES[m.name]);
+  if (setups.length === 0) return null;
+  const thrPct = thr?.dmgPct ?? 100;
+  // 相手が確3以下 (dmg < 35) かつこちらが火力/速度で勝っている＝積み適性高
+  const veryComfortable = thrPct < 22 && (race?.verdict === 'win' || race?.verdict === 'winProb');
+  const comfortable = thrPct < 35;
+  if (!comfortable) return null;
+  // 攻撃技ブースト系を優先的に提案
+  const tierRank = (name) => {
+    if (['つるぎのまい','りゅうのまい','わるだくみ','ちょうのまい','からをやぶる'].includes(name)) return 3;
+    if (['めいそう','コスモパワー','バルクアップ','ビルドアップ','コットンガード','てっぺき','ドわすれ'].includes(name)) return 2;
+    return 1;
+  };
+  const moves = setups.map(m => ({mv:m, info:SETUP_MOVES[m.name], rank:tierRank(m.name)}))
+    .sort((a,b) => b.rank - a.rank);
+  return {
+    level: veryComfortable ? 'high' : 'mid',
+    thrPct,
+    moves
+  };
+}
+
+// 優先度技レース
+function priorityRace(userPoke, opp) {
+  const pick = (poke) => (poke?.moves || []).filter(m => m && movePriority(m) > 0)
+    .map(m => ({name:m.name, type:m.type, cat:m.cat, priority:movePriority(m)}))
+    .sort((a,b) => b.priority - a.priority);
+  const u = pick(userPoke);
+  const o = pick(opp);
+  if (u.length === 0 && o.length === 0) return null;
+  return {user:u, opp:o};
+}
+
 // ====== 対戦ガイド（バトル中のリアルタイム判断支援） ======
 // フロー:
 //   1) 自軍から3匹を選出（メガ2体は除外）
@@ -4835,6 +5015,19 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
   const [activeOpp, setActiveOpp] = useState(null); // opponents内のindex
   const [userPickerOpen, setUserPickerOpen] = useState(null); // picks内のindex
   const [oppPickerOpen, setOppPickerOpen] = useState(null); // opponents内のindex
+  // フィールド状態トラッカー
+  const [field, setField] = useState({
+    weather: null,   // 'sun'|'rain'|'sand'|'snow'|null
+    weatherT: 0,     // 残りターン
+    terrain: null,   // 'electric'|'grass'|'psychic'|'misty'|null
+    terrainT: 0,
+    trickRoom: false,
+    trickRoomT: 0,
+    hazardsOpp: {sr:false, spikes:0, tspikes:0, web:false},  // 相手側(こちらが設置)
+    hazardsUser: {sr:false, spikes:0, tspikes:0, web:false}, // こちら側(相手が設置)
+    screens: {reflect:0, light:0, veil:0}, // 残Tまたは0=無し
+  });
+  const [turn, setTurn] = useState(1);
 
   // localStorage: 現在のバトル状態を復元
   useEffect(() => {
@@ -4847,6 +5040,8 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
         if (Array.isArray(d.koOpp)) setKoOpp(d.koOpp);
         if (typeof d.activeUser === 'number') setActiveUser(d.activeUser);
         if (typeof d.activeOpp === 'number') setActiveOpp(d.activeOpp);
+        if (d.field && typeof d.field === 'object') setField(f => ({...f, ...d.field}));
+        if (typeof d.turn === 'number') setTurn(d.turn);
       }
     } catch(e) {}
   }, []);
@@ -4863,9 +5058,9 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
   }, [userTeam]);
   useEffect(() => {
     try {
-      localStorage.setItem('live_battle_v1', JSON.stringify({picks, koUser, koOpp, activeUser, activeOpp}));
+      localStorage.setItem('live_battle_v1', JSON.stringify({picks, koUser, koOpp, activeUser, activeOpp, field, turn}));
     } catch(e) {}
-  }, [picks, koUser, koOpp, activeUser, activeOpp]);
+  }, [picks, koUser, koOpp, activeUser, activeOpp, field, turn]);
 
   const pickedUsers = picks.map(idx => idx != null ? userTeam[idx] : null);
   const pickedCount = pickedUsers.filter(Boolean).length;
@@ -4889,13 +5084,64 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
     if (activeUser === picksSlot) setActiveUser(null);
   };
   const resetBattle = () => {
-    if (!confirm('バトル状態をリセットしますか？（選出・KO状態をクリア）')) return;
+    if (!confirm('バトル状態をリセットしますか？（選出・KO状態・場の状況をクリア）')) return;
     setPicks([null, null, null]);
     setKoUser([false, false, false]);
     setKoOpp([false, false, false, false, false, false]);
     setActiveUser(null);
     setActiveOpp(null);
+    setField({
+      weather: null, weatherT: 0, terrain: null, terrainT: 0,
+      trickRoom: false, trickRoomT: 0,
+      hazardsOpp: {sr:false, spikes:0, tspikes:0, web:false},
+      hazardsUser: {sr:false, spikes:0, tspikes:0, web:false},
+      screens: {reflect:0, light:0, veil:0},
+    });
+    setTurn(1);
   };
+  // ターン進行（フィールド/壁/TRの残Tデクリメント）
+  const advanceTurn = (delta) => {
+    setTurn(t => Math.max(1, t + delta));
+    if (delta > 0) {
+      setField(f => ({
+        ...f,
+        weatherT: Math.max(0, f.weatherT - 1),
+        weather: f.weatherT <= 1 ? null : f.weather,
+        terrainT: Math.max(0, f.terrainT - 1),
+        terrain: f.terrainT <= 1 ? null : f.terrain,
+        trickRoomT: Math.max(0, f.trickRoomT - 1),
+        trickRoom: f.trickRoomT <= 1 ? false : f.trickRoom,
+        screens: {
+          reflect: Math.max(0, f.screens.reflect - 1),
+          light: Math.max(0, f.screens.light - 1),
+          veil: Math.max(0, f.screens.veil - 1),
+        },
+      }));
+    }
+  };
+  // フィールド状態操作
+  const setWeather = (w) => setField(f => ({...f, weather: w === f.weather ? null : w, weatherT: w === f.weather ? 0 : 5}));
+  const setTerrain = (t) => setField(f => ({...f, terrain: t === f.terrain ? null : t, terrainT: t === f.terrain ? 0 : 5}));
+  const toggleTrickRoom = () => setField(f => ({...f, trickRoom: !f.trickRoom, trickRoomT: f.trickRoom ? 0 : 5}));
+  const toggleHazardOpp = (k) => setField(f => ({
+    ...f,
+    hazardsOpp: {
+      ...f.hazardsOpp,
+      [k]: k === 'spikes' ? Math.min(3, (f.hazardsOpp.spikes || 0) + 1) % 4
+         : k === 'tspikes' ? Math.min(2, (f.hazardsOpp.tspikes || 0) + 1) % 3
+         : !f.hazardsOpp[k]
+    }
+  }));
+  const toggleHazardUser = (k) => setField(f => ({
+    ...f,
+    hazardsUser: {
+      ...f.hazardsUser,
+      [k]: k === 'spikes' ? Math.min(3, (f.hazardsUser.spikes || 0) + 1) % 4
+         : k === 'tspikes' ? Math.min(2, (f.hazardsUser.tspikes || 0) + 1) % 3
+         : !f.hazardsUser[k]
+    }
+  }));
+  const toggleScreen = (k) => setField(f => ({...f, screens: {...f.screens, [k]: f.screens[k] > 0 ? 0 : 5}}));
   const toggleKoUser = (i) => {
     const copy = [...koUser];
     copy[i] = !copy[i];
@@ -5100,8 +5346,18 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
       abilityAdvice.push({text:`🚫 相手の${o.ability}で主力技が無効化されている可能性`, cls:'text-red-700 font-bold'});
     }
 
+    // 各技の打点解析
+    const perMove = perMoveAnalysis(u, o);
+    // 相手の判明技
+    const oppMove = oppMoveAnalysis(o, u);
+    // 積み窓口判定
+    const setupOp = setupOpportunity(u, ms.thr, race);
+    // 優先度レース
+    const pRace = priorityRace(u, o);
+
     return {u, o, ms, verdict, verdictColor, verdictReasons, speedInfo, bestMv, offAcc,
-            alternatives, sp, kt, ktOpp, race, scarfRisk, priority, oppSwitchCandidates, abilityAdvice};
+            alternatives, sp, kt, ktOpp, race, scarfRisk, priority, oppSwitchCandidates, abilityAdvice,
+            perMove, oppMove, setupOp, pRace};
   }, [activeUser, activeOpp, picks, koUser, koOpp, userTeam, opponents, pickedUsers]);
 
   // 残存状況サマリ
@@ -5346,6 +5602,133 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
         </div>
       </div>
 
+      {/* フィールド状態トラッカー */}
+      <div className="bg-white border rounded-lg p-2.5">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-xs font-bold text-gray-700">🌤 場の状況トラッカー</div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={()=>advanceTurn(-1)} className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white hover:bg-gray-50" title="ターン戻す">−</button>
+            <span className="text-[11px] font-bold text-gray-700">T{turn}</span>
+            <button onClick={()=>advanceTurn(1)} className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-blue-100 text-blue-700 hover:bg-blue-200" title="ターン進める">＋</button>
+          </div>
+        </div>
+        {/* 天候 */}
+        <div className="mb-1.5">
+          <div className="text-[10px] text-gray-500 mb-0.5">天候 {field.weather && <span className="text-blue-700 font-bold">残{field.weatherT}T</span>}</div>
+          <div className="flex gap-1 flex-wrap">
+            {[
+              {k:'sun', label:'☀ 晴れ', cls:'bg-amber-100 text-amber-800 border-amber-300', active:'bg-amber-500 text-white border-amber-600'},
+              {k:'rain', label:'🌧 雨', cls:'bg-blue-100 text-blue-800 border-blue-300', active:'bg-blue-500 text-white border-blue-600'},
+              {k:'sand', label:'🌪 砂', cls:'bg-yellow-100 text-yellow-800 border-yellow-300', active:'bg-yellow-600 text-white border-yellow-700'},
+              {k:'snow', label:'❄ 雪', cls:'bg-cyan-100 text-cyan-800 border-cyan-300', active:'bg-cyan-500 text-white border-cyan-600'},
+            ].map(w => (
+              <button key={w.k} onClick={()=>setWeather(w.k)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded border ${field.weather === w.k ? w.active : w.cls}`}>
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* フィールド */}
+        <div className="mb-1.5">
+          <div className="text-[10px] text-gray-500 mb-0.5">フィールド {field.terrain && <span className="text-green-700 font-bold">残{field.terrainT}T</span>}</div>
+          <div className="flex gap-1 flex-wrap">
+            {[
+              {k:'electric', label:'⚡ エレキ', cls:'bg-yellow-100 text-yellow-800 border-yellow-300', active:'bg-yellow-500 text-white border-yellow-600'},
+              {k:'grass', label:'🌿 グラス', cls:'bg-green-100 text-green-800 border-green-300', active:'bg-green-500 text-white border-green-600'},
+              {k:'psychic', label:'🔮 サイコ', cls:'bg-pink-100 text-pink-800 border-pink-300', active:'bg-pink-500 text-white border-pink-600'},
+              {k:'misty', label:'🌫 ミスト', cls:'bg-pink-50 text-pink-700 border-pink-200', active:'bg-pink-300 text-white border-pink-400'},
+            ].map(t => (
+              <button key={t.k} onClick={()=>setTerrain(t.k)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded border ${field.terrain === t.k ? t.active : t.cls}`}>
+                {t.label}
+              </button>
+            ))}
+            <button onClick={toggleTrickRoom}
+              className={`text-[10px] font-bold px-2 py-0.5 rounded border ${field.trickRoom ? 'bg-purple-500 text-white border-purple-600' : 'bg-purple-100 text-purple-800 border-purple-300'}`}>
+              🕳 TR {field.trickRoom && `残${field.trickRoomT}T`}
+            </button>
+          </div>
+        </div>
+        {/* ハザード */}
+        <div className="grid grid-cols-2 gap-2 mb-1.5">
+          <div>
+            <div className="text-[10px] text-red-600 font-bold mb-0.5">敵側ハザード(自軍が設置)</div>
+            <div className="flex gap-1 flex-wrap">
+              <button onClick={()=>toggleHazardOpp('sr')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsOpp.sr ? 'bg-orange-500 text-white border-orange-600' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                🪨 SR
+              </button>
+              <button onClick={()=>toggleHazardOpp('spikes')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsOpp.spikes > 0 ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                🧷 びし×{field.hazardsOpp.spikes}
+              </button>
+              <button onClick={()=>toggleHazardOpp('tspikes')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsOpp.tspikes > 0 ? 'bg-purple-500 text-white border-purple-600' : 'bg-purple-50 text-purple-700 border-purple-200'}`}>
+                🧪 毒×{field.hazardsOpp.tspikes}
+              </button>
+              <button onClick={()=>toggleHazardOpp('web')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsOpp.web ? 'bg-cyan-500 text-white border-cyan-600' : 'bg-cyan-50 text-cyan-700 border-cyan-200'}`}>
+                🕸 網
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-blue-600 font-bold mb-0.5">自軍側ハザード(相手が設置)</div>
+            <div className="flex gap-1 flex-wrap">
+              <button onClick={()=>toggleHazardUser('sr')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsUser.sr ? 'bg-orange-500 text-white border-orange-600' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                🪨 SR
+              </button>
+              <button onClick={()=>toggleHazardUser('spikes')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsUser.spikes > 0 ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                🧷 びし×{field.hazardsUser.spikes}
+              </button>
+              <button onClick={()=>toggleHazardUser('tspikes')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsUser.tspikes > 0 ? 'bg-purple-500 text-white border-purple-600' : 'bg-purple-50 text-purple-700 border-purple-200'}`}>
+                🧪 毒×{field.hazardsUser.tspikes}
+              </button>
+              <button onClick={()=>toggleHazardUser('web')}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.hazardsUser.web ? 'bg-cyan-500 text-white border-cyan-600' : 'bg-cyan-50 text-cyan-700 border-cyan-200'}`}>
+                🕸 網
+              </button>
+            </div>
+          </div>
+        </div>
+        {/* 壁 */}
+        <div>
+          <div className="text-[10px] text-gray-500 mb-0.5">壁 (残T)</div>
+          <div className="flex gap-1 flex-wrap">
+            <button onClick={()=>toggleScreen('reflect')}
+              className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.screens.reflect > 0 ? 'bg-red-500 text-white border-red-600' : 'bg-red-50 text-red-700 border-red-200'}`}>
+              🟥 リフレクター {field.screens.reflect > 0 ? field.screens.reflect : ''}
+            </button>
+            <button onClick={()=>toggleScreen('light')}
+              className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.screens.light > 0 ? 'bg-blue-500 text-white border-blue-600' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+              🟦 ひかりのかべ {field.screens.light > 0 ? field.screens.light : ''}
+            </button>
+            <button onClick={()=>toggleScreen('veil')}
+              className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${field.screens.veil > 0 ? 'bg-cyan-500 text-white border-cyan-600' : 'bg-cyan-50 text-cyan-700 border-cyan-200'}`}>
+              🌈 オーロラベール {field.screens.veil > 0 ? field.screens.veil : ''}
+            </button>
+          </div>
+        </div>
+        {/* 効果リマインダ */}
+        {(field.weather || field.terrain || field.trickRoom) && (
+          <div className="mt-1.5 pt-1.5 border-t text-[10px] text-gray-600 space-y-0.5">
+            {field.weather === 'sun' && <div>☀ 晴れ: ほのお×1.5 / みず×0.5 / 回復技50%しか回復せず / ソーラービーム1T発動 / すいほう系バフ</div>}
+            {field.weather === 'rain' && <div>🌧 雨: みず×1.5 / ほのお×0.5 / かみなり命中100 / ぼうふう命中100 / あめうけざら回復</div>}
+            {field.weather === 'sand' && <div>🌪 砂: いわタイプのD1.5倍 / 砂ダメ毎T1/16 (岩/地/鋼以外)</div>}
+            {field.weather === 'snow' && <div>❄ 雪: こおりタイプのB1.5倍 / ふぶき命中100 / オーロラベール使用可</div>}
+            {field.terrain === 'electric' && <div>⚡ エレキF: でんき×1.3 / 地面ポケはねむり無効</div>}
+            {field.terrain === 'grass' && <div>🌿 グラスF: くさ×1.3 / 地面ポケに毎T1/16回復 / 地震/マグニチュード半減</div>}
+            {field.terrain === 'psychic' && <div>🔮 サイコF: エスパー×1.3 / 地面ポケに先制技無効</div>}
+            {field.terrain === 'misty' && <div>🌫 ミストF: ドラゴン×0.5 / 地面ポケは状態異常無効</div>}
+            {field.trickRoom && <div>🕳 トリックルーム: 素早さ逆転。遅いポケが先制</div>}
+          </div>
+        )}
+      </div>
+
       {/* STEP3: 現在の対面 */}
       {faceOff ? (
         <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-400 rounded-lg p-3 space-y-2">
@@ -5460,6 +5843,164 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
               <div key={i} className="text-gray-600">💡 {r}</div>
             ))}
           </div>
+
+          {/* 自軍4技の打点一覧 */}
+          {faceOff.perMove.length > 0 && (
+            <div className="bg-white rounded border border-blue-200 p-2">
+              <div className="text-[10px] font-bold text-blue-900 mb-1">🎯 わざ別 打点一覧</div>
+              <div className="space-y-0.5">
+                {faceOff.perMove.map((m, i) => {
+                  const dmg = m.dmgPct || 0;
+                  const kt = m.isStatus || m.blocked ? null : killTurns(dmg, m.acc);
+                  const rowCls = m.blocked
+                    ? 'bg-gray-100 border-gray-300 text-gray-500'
+                    : m.isStatus
+                      ? 'bg-gray-50 border-gray-200 text-gray-600'
+                      : dmg >= 100 ? 'bg-green-50 border-green-300'
+                        : dmg >= 50 ? 'bg-emerald-50 border-emerald-200'
+                        : dmg >= 25 ? 'bg-white border-gray-200'
+                        : 'bg-orange-50 border-orange-200';
+                  return (
+                    <div key={i} className={`flex items-center gap-1.5 border rounded px-1.5 py-0.5 text-[11px] ${rowCls}`}>
+                      <TypeBadge type={m.type} size="xs" />
+                      {m.cat && <span className={`text-[9px] font-bold px-1 rounded ${MOVE_CAT_CLS[m.cat]||''}`}>{m.cat}</span>}
+                      <span className="font-bold truncate flex-1">{m.name}</span>
+                      {m.stab && <span className="text-[9px] text-red-600 font-bold">STAB</span>}
+                      {m.priority > 0 && <span className="text-[9px] text-sky-700 font-bold">+{m.priority}</span>}
+                      {m.priority < 0 && <span className="text-[9px] text-gray-500">{m.priority}</span>}
+                      {m.mult !== undefined && m.mult !== 1 && !m.blocked && (
+                        <span className={`text-[9px] font-bold ${m.mult >= 2 ? 'text-green-700' : 'text-gray-500'}`}>×{m.mult}</span>
+                      )}
+                      {m.resistBonus && (
+                        <span className="text-[9px] text-orange-600 font-bold" title="特性による軽減">×{m.resistBonus}</span>
+                      )}
+                      {m.blocked ? (
+                        <span className="text-[10px] font-bold text-red-600 ml-auto">🚫{m.reason}</span>
+                      ) : m.isStatus ? (
+                        <span className="text-[10px] text-gray-500 ml-auto">{SETUP_MOVES[m.name]?.stat || '変化技'}</span>
+                      ) : (
+                        <>
+                          <span className="text-[10px] font-bold text-blue-700 ml-auto">{dmg}%</span>
+                          {kt && <span className="text-[9px] text-gray-600">{kt.turns}発</span>}
+                          {m.acc < 100 && <span className="text-[9px] text-amber-600">命{m.acc}</span>}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 相手の判明技（相手のmoves登録時のみ） */}
+          {faceOff.oppMove && faceOff.oppMove.length > 0 && (
+            <div className="bg-white rounded border border-red-200 p-2">
+              <div className="text-[10px] font-bold text-red-900 mb-1">🛡 相手のわざ (判明分)</div>
+              <div className="space-y-0.5">
+                {faceOff.oppMove.map((m, i) => {
+                  const dmg = m.dmgPct || 0;
+                  const kt = m.isStatus || m.blocked ? null : killTurns(dmg, 90); // 相手命中粗めに90%
+                  const rowCls = m.blocked
+                    ? 'bg-green-50 border-green-300 text-green-700'
+                    : m.isStatus
+                      ? 'bg-gray-50 border-gray-200 text-gray-600'
+                      : dmg >= 100 ? 'bg-red-100 border-red-400'
+                        : dmg >= 50 ? 'bg-orange-50 border-orange-300'
+                        : dmg >= 25 ? 'bg-yellow-50 border-yellow-200'
+                        : 'bg-white border-gray-200';
+                  return (
+                    <div key={i} className={`flex items-center gap-1.5 border rounded px-1.5 py-0.5 text-[11px] ${rowCls}`}>
+                      <TypeBadge type={m.type} size="xs" />
+                      {m.cat && <span className={`text-[9px] font-bold px-1 rounded ${MOVE_CAT_CLS[m.cat]||''}`}>{m.cat}</span>}
+                      <span className="font-bold truncate flex-1">{m.name}</span>
+                      {m.stab && <span className="text-[9px] text-red-600 font-bold">STAB</span>}
+                      {m.priority > 0 && <span className="text-[9px] text-sky-700 font-bold">+{m.priority}</span>}
+                      {m.mult !== undefined && m.mult !== 1 && !m.blocked && (
+                        <span className={`text-[9px] font-bold ${m.mult >= 2 ? 'text-red-700' : 'text-gray-500'}`}>×{m.mult}</span>
+                      )}
+                      {m.blocked ? (
+                        <span className="text-[10px] font-bold text-green-700 ml-auto">✓{m.reason}</span>
+                      ) : m.isStatus ? (
+                        <span className="text-[10px] text-gray-500 ml-auto">{SETUP_MOVES[m.name]?.stat || '変化技'}</span>
+                      ) : (
+                        <>
+                          <span className="text-[10px] font-bold text-orange-700 ml-auto">{dmg}%</span>
+                          {kt && <span className="text-[9px] text-gray-600">{kt.turns}発</span>}
+                          {m.acc < 100 && <span className="text-[9px] text-amber-600">命{m.acc}</span>}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 先制技レース */}
+          {faceOff.pRace && (faceOff.pRace.user.length > 0 || faceOff.pRace.opp.length > 0) && (
+            <div className="bg-sky-50 rounded border border-sky-200 p-2">
+              <div className="text-[10px] font-bold text-sky-900 mb-1">⚡ 先制技レース</div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <div className="text-[10px] text-gray-600 mb-0.5">自軍 (<b>{faceOff.u.jp}</b>)</div>
+                  {faceOff.pRace.user.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {faceOff.pRace.user.map((m,i) => (
+                        <div key={i} className="flex items-center gap-1 bg-white border border-sky-200 rounded px-1 py-0.5">
+                          <TypeBadge type={m.type} size="xs" />
+                          <span className="font-bold truncate flex-1">{m.name}</span>
+                          <span className="text-sky-700 font-bold">+{m.priority}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="text-gray-400 text-[10px]">先制技なし</div>}
+                </div>
+                <div>
+                  <div className="text-[10px] text-gray-600 mb-0.5">相手 ({faceOff.o.jp})</div>
+                  {faceOff.pRace.opp.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {faceOff.pRace.opp.map((m,i) => (
+                        <div key={i} className="flex items-center gap-1 bg-white border border-red-200 rounded px-1 py-0.5">
+                          <TypeBadge type={m.type} size="xs" />
+                          <span className="font-bold truncate flex-1">{m.name}</span>
+                          <span className="text-red-700 font-bold">+{m.priority}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="text-gray-400 text-[10px]">判明なし</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 積み窓口 */}
+          {faceOff.setupOp && (
+            <div className={`rounded border p-2 ${
+              faceOff.setupOp.level === 'high'
+                ? 'bg-purple-50 border-purple-300'
+                : 'bg-indigo-50 border-indigo-200'
+            }`}>
+              <div className={`text-[10px] font-bold mb-1 ${
+                faceOff.setupOp.level === 'high' ? 'text-purple-900' : 'text-indigo-900'
+              }`}>
+                {faceOff.setupOp.level === 'high' ? '💎 絶好の積み窓口（被弾' : '💫 積み/補助チャンス（被弾'}
+                {faceOff.setupOp.thrPct}%）
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {faceOff.setupOp.moves.map((s,i) => (
+                  <div key={i}
+                    className="flex items-center gap-1 bg-white border rounded px-1.5 py-0.5 text-[10px]">
+                    <span>{s.info.icon}</span>
+                    <span className={`font-bold ${s.info.cls}`}>{s.mv.name}</span>
+                    <span className="text-gray-500">{s.info.stat}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-gray-600 mt-1">
+                相手の火力が低い対面。積んで全抜きを狙うか、壁/撒き物などサポート技で後続の展開補助を検討
+              </div>
+            </div>
+          )}
 
           {/* 交代読み警告 */}
           {faceOff.oppSwitchCandidates.length > 0 && (
@@ -5851,7 +6392,7 @@ function App() {
       <div className="max-w-6xl mx-auto p-3 sm:p-4">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.5 GameWith整合</span></h1>
+            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.6 対戦ガイド強化</span></h1>
             <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
           </div>
           <div className="flex flex-col items-end gap-1">
