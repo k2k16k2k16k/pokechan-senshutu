@@ -68,6 +68,58 @@ function defensiveMult(attackType, defTypes) {
   });
   return m;
 }
+
+// ====== とくせい補正 ======
+// 防御側のとくせいによる被ダメ倍率（0=無効、0.5=半減、0.75=軽減、1=等倍）
+// attackerがかたやぶり系なら無視されるため、attackerAbility引数もあり
+function abilityDefenseMult(defender, attackType, typeMult, attackerAbility) {
+  if (!defender || !defender.ability) return 1;
+  const atkAb = attackerAbility ? ABILITY_MAP[attackerAbility] : null;
+  // かたやぶり系は相手とくせいを無視
+  if (atkAb && (atkAb.id === 'かたやぶり' || atkAb.id === 'ターボブレイズ' || atkAb.id === 'テラボルテージ')) return 1;
+  const ab = ABILITY_MAP[defender.ability];
+  if (!ab) return 1;
+  // タイプ無効
+  if ((ab.group === 'immunity' || ab.group === 'absorb') && ab.immuneTypes && ab.immuneTypes.includes(attackType)) return 0;
+  // タイプ半減
+  if (ab.group === 'resist' && ab.resistTypes && ab.resistTypes.includes(attackType)) return 0.5;
+  // 効果抜群軽減
+  if ((ab.id === 'フィルター' || ab.id === 'ハードロック') && typeMult >= 2) return 0.75;
+  // マルチスケイル: HP満タン仮定で半減
+  if (ab.id === 'マルチスケイル') return 0.5;
+  // ファーコート: 物理半減（簡易: 全体的に0.85扱い）
+  if (ab.id === 'ファーコート') return 0.65;
+  return 1;
+}
+
+// 攻撃側とくせいによる火力倍率
+function abilityAttackMult(attacker, mv) {
+  if (!attacker || !attacker.ability || !mv) return 1;
+  const ab = ABILITY_MAP[attacker.ability];
+  if (!ab) return 1;
+  // 威力強化系
+  if (ab.id === 'てきおうりょく' && attacker.types?.includes(mv.type)) return 1.33; // STAB 1.5 → 2.0 を粗く
+  if (ab.id === 'テクニシャン') {
+    const bp = (mv.bp != null) ? mv.bp : (MOVE_BP[mv.name] ?? 0);
+    if (bp > 0 && bp <= 60) return 1.5;
+  }
+  if (ab.id === 'ちからずく') return 1.3;
+  if (ab.id === 'メガランチャー') {
+    const waveMoves = ['はどうだん','みずのはどう','あくのはどう','りゅうのはどう','あくうせつだん'];
+    if (waveMoves.some(n => mv.name && mv.name.includes(n))) return 1.5;
+  }
+  if (ab.id === 'てつのこぶし') {
+    const punchMoves = ['パンチ','アイアンヘッド','ばくれつパンチ','れいとうパンチ','ほのおのパンチ','かみなりパンチ','れいとうパンチ','ドレインパンチ'];
+    if (mv.name && punchMoves.some(n => mv.name.includes('パンチ'))) return 1.2;
+  }
+  if (ab.id === 'ヨガパワー' && mv.cat === '物') return 2.0;
+  if (ab.id === 'ちからもち' && mv.cat === '物') return 2.0;
+  if (ab.id === 'いろめがね') {
+    // いまひとつなら等倍化（mult半減を補正）→ ここでは別途処理が必要なので省略
+    return 1;
+  }
+  return 1;
+}
 function allWeaknesses(defTypes) {
   const r = {};
   TYPES.forEach(atk => { r[atk] = defensiveMult(atk, defTypes); });
@@ -78,13 +130,16 @@ function allWeaknesses(defTypes) {
 // 形式: score = 倍率 × 一致 × 攻AC × 防BD × 威力 × 持ち物 × 4倍非線形
 // 返却: スコアの他、内訳と最適技、想定ダメージ% (期待値の粗見積り)
 function bestHitScore(userPoke, opp) {
-  const blank = {score:0, mult:0, stab:false, mv:null, offF:1, defF:1, powF:1, itemF:1, bonus:1, accF:1, priority:0, dmgPct:0, bpSrc:'default'};
+  const blank = {score:0, mult:0, stab:false, mv:null, offF:1, defF:1, powF:1, itemF:1, bonus:1, accF:1, abF:1, priority:0, dmgPct:0, bpSrc:'default', abilityBlocked:false};
   if (!userPoke || !opp) return blank;
   let best = blank;
   for (const mv of (userPoke.moves || [])) {
     if (!mv.type || mv.cat === '変') continue;
     const mult = defensiveMult(mv.type, opp.types);
     if (mult === 0) continue;
+    // 相手のとくせいで無効化される場合はスキップ
+    const abDefMul = abilityDefenseMult(opp, mv.type, mult, userPoke.ability);
+    if (abDefMul === 0) continue;
     const stab = userPoke.types.includes(mv.type);
     const offF = offensiveFactor(userPoke, mv);
     const defF = defensiveFactor(opp, mv);
@@ -92,14 +147,26 @@ function bestHitScore(userPoke, opp) {
     const itemF = itemFactor(userPoke, mv);
     const bonus = multNonLinearBonus(mult);
     const accF = accuracyFactor(mv);
-    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus * accF;
+    const abF = abilityAttackMult(userPoke, mv);
+    const score = mult * (stab ? 1.5 : 1) * offF * defF * powF * itemF * bonus * accF * abF * abDefMul;
     const priority = movePriority(mv);
     const bpSrc = bpSource(mv);
     // 相手HPに対する期待ダメージ%（粗見積り）
     const oppStats = getPokeStatsObj(opp.id);
     const hpBase = oppStats?.hp || 80;
     const dmgPct = Math.min(200, Math.round(score * 3300 / hpBase));
-    if (score > best.score) best = {score, mult, stab, mv, offF, defF, powF, itemF, bonus, accF, priority, dmgPct, bpSrc};
+    if (score > best.score) best = {score, mult, stab, mv, offF, defF, powF, itemF, bonus, accF, abF, priority, dmgPct, bpSrc, abilityBlocked:false};
+  }
+  // もし全ての技が相手とくせいで無効化されているなら abilityBlocked フラグ
+  if (best.score === 0) {
+    const hasAttackMove = (userPoke.moves || []).some(mv => mv.type && mv.cat !== '変');
+    if (hasAttackMove) {
+      // 有効打なし（タイプ相性 or とくせい無効）
+      best = {...blank, abilityBlocked: !!opp.ability && (userPoke.moves || []).some(mv => {
+        if (!mv.type || mv.cat === '変') return false;
+        return abilityDefenseMult(opp, mv.type, defensiveMult(mv.type, opp.types), userPoke.ability) === 0;
+      })};
+    }
   }
   return best;
 }
@@ -123,6 +190,9 @@ function defenseThreat(opp, userPoke) {
   for (const t of opp.types) {
     const mult = defensiveMult(t, userPoke.types);
     if (mult === 0) continue;
+    // 自軍のとくせいで無効化されるタイプ技はスキップ
+    const abDefMul = abilityDefenseMult(userPoke, t, mult, opp.ability);
+    if (abDefMul === 0) continue;
     // 自軍のBD
     const userStats = getPokeStatsObj(userPoke.id);
     const defStat = cat === '物' ? (userStats?.def || 80) : (userStats?.sdef || 80);
@@ -132,11 +202,11 @@ function defenseThreat(opp, userPoke) {
     const bonus = multNonLinearBonus(mult);
     // 持ち物による軽減
     const itemDefF = itemDefenseFactor(opp, userPoke, t, mult);
-    const threat = mult * 1.5 * offF * defF * powF * bonus * itemDefF;
+    const threat = mult * 1.5 * offF * defF * powF * bonus * itemDefF * abDefMul;
     const hp = userStats?.hp || 80;
     const dmgPct = Math.min(200, Math.round(threat * 3300 / hp));
     if (threat > best.threat) {
-      best = {threat, type:t, cat, mult, dmgPct, itemDefF};
+      best = {threat, type:t, cat, mult, dmgPct, itemDefF, abDefMul};
     }
   }
   // タイプなしor全て無効の場合、ノーマル物理技を仮定（最低限の脅威）
@@ -174,6 +244,59 @@ function matchupScore(userPoke, opp) {
   // 脅威重みは0.7（こちらの攻撃を優先しつつ被弾も考慮）
   const total = off.score - thr.threat * 0.7 + speedBonus;
   return {total, offense:off.score, threat:thr.threat, speed:speedBonus, off, thr};
+}
+
+// ====== 確定数・速度分析ヘルパー（対戦ガイド用） ======
+// 確定数: dmgPctから何発で落とせるか (+ 命中補正)
+// 返却: null (攻撃手段なし) or {turns, accTurns, dmgPct, accuracy}
+function killTurns(dmgPct, accuracy) {
+  const acc = (accuracy == null || accuracy > 100) ? 100 : Math.max(1, accuracy);
+  if (!dmgPct || dmgPct <= 0) return null;
+  const clamped = Math.min(dmgPct, 400);
+  const turns = Math.max(1, Math.ceil(100 / clamped));
+  const eff = clamped * acc / 100;
+  const accTurns = Math.max(1, Math.ceil(100 / Math.max(1, eff)));
+  return {turns, accTurns, dmgPct:clamped, accuracy:acc};
+}
+
+// 速度比較分析（スカーフ警戒込み）
+function speedAnalysis(u, o) {
+  if (!u || !o) return null;
+  const us = effectiveSpeed(u);
+  const os = effectiveSpeed(o);
+  const osScarf = Math.floor(os * 1.5);
+  const isFaster = us > os;
+  const isSlower = us < os;
+  const isSame = us === os;
+  const scarfBeats = us <= osScarf; // 相手がこだわりスカーフならこちらが負ける
+  const scarfSafe = us > osScarf;   // スカーフでも勝てる
+  return {us, os, osScarf, isFaster, isSlower, isSame, scarfBeats, scarfSafe};
+}
+
+// レース勝敗判定: こちらの確定数・相手の確定数・速度から勝ち筋を推定
+// 返却: {verdict:'win'|'winProb'|'draw'|'lose', label, reason, color}
+function raceVerdict(kt, ktOpp, speed, priority) {
+  const hasPri = priority > 0;
+  if (!kt) return {verdict:'lose', label:'攻撃手段なし', reason:'有効打がない', color:'text-red-700'};
+  if (!ktOpp) return {verdict:'win', label:`${kt.turns}発で撃破`, reason:'相手の火力データ不足', color:'text-green-700'};
+  const a = kt.turns;    // 自分が倒すのに必要な発数
+  const b = ktOpp.turns; // 相手が倒すのに必要な発数
+  if (a === 1 && (speed.isFaster || hasPri)) return {verdict:'win', label:`1発KO（先制${hasPri?'技':''}）`, reason:'確1確定', color:'text-green-700'};
+  if (speed.isFaster) {
+    if (a <= b) return {verdict:'win', label:`先手${a}発勝ち`, reason:`相手${b}発耐え`, color:'text-green-700'};
+    if (a === b + 1 && hasPri) return {verdict:'winProb', label:'先制技で捲り可', reason:`先制技で最後の1発`, color:'text-emerald-600'};
+    return {verdict:'lose', label:`${b}発で負け`, reason:`こちら${a}発必要だが相手${b}発で先KO`, color:'text-red-600'};
+  }
+  if (speed.isSame) {
+    if (a < b) return {verdict:'winProb', label:`同速${a}発勝ち（50%）`, reason:'同速乱数', color:'text-yellow-700'};
+    if (a === b) return {verdict:'draw', label:'同速相打ち圏', reason:`両者${a}発`, color:'text-gray-700'};
+    return {verdict:'lose', label:`${b}発で負け`, reason:'同速乱数でも不利', color:'text-red-600'};
+  }
+  // 後手
+  if (hasPri && a <= b) return {verdict:'win', label:`先制技で${a}発勝ち`, reason:'後手だが先制で抜ける', color:'text-green-700'};
+  if (a < b) return {verdict:'win', label:`後手${a}発勝ち`, reason:`相手${b}発耐え`, color:'text-green-700'};
+  if (a === b) return {verdict:'lose', label:`後手${b}発で先KO負け`, reason:'同発数・後手', color:'text-red-600'};
+  return {verdict:'lose', label:`${b}発で負け`, reason:'先手取れず火力不足', color:'text-red-700'};
 }
 
 // チーム総合評価 (高いほど良い)
@@ -268,6 +391,146 @@ function classifyByMoves(moves) {
 }
 // 技分類バッジの色
 const MOVE_CAT_CLS = { '物':'bg-red-500 text-white', '特':'bg-blue-500 text-white', '変':'bg-gray-400 text-white' };
+
+// ====== 技→タイプ/分類 辞書（技名入力時の自動補完用） ======
+// 注: MOVE_BP の登録技を中心にカバー。未登録技は手動入力で。
+const MOVE_DATA = {
+  // --- ノーマル ---
+  'たいあたり':{type:'normal',cat:'物'}, 'のしかかり':{type:'normal',cat:'物'}, 'すてみタックル':{type:'normal',cat:'物'},
+  'ばくれつパンチ':{type:'fighting',cat:'物'}, 'ギガインパクト':{type:'normal',cat:'物'}, 'はかいこうせん':{type:'normal',cat:'特'},
+  'しんそく':{type:'normal',cat:'物'}, 'ねこだまし':{type:'normal',cat:'物'}, 'でんこうせっか':{type:'normal',cat:'物'},
+  'おんがえし':{type:'normal',cat:'物'}, 'やつあたり':{type:'normal',cat:'物'},
+  'きりさく':{type:'normal',cat:'物'}, 'みねうち':{type:'normal',cat:'物'}, 'ヘッドバット':{type:'normal',cat:'物'},
+  'ハイパーボイス':{type:'normal',cat:'特'}, 'ばかぢから':{type:'fighting',cat:'物'}, 'おいうち':{type:'dark',cat:'物'},
+  'トライアタック':{type:'normal',cat:'特'}, 'スピードスター':{type:'normal',cat:'特'}, 'すりつぶす':{type:'normal',cat:'物'},
+  'あばれる':{type:'normal',cat:'物'}, 'とっしん':{type:'normal',cat:'物'}, 'みだれひっかき':{type:'normal',cat:'物'},
+  'おうふくビンタ':{type:'normal',cat:'物'}, 'ダブルアタック':{type:'normal',cat:'物'}, 'にどげり':{type:'fighting',cat:'物'},
+  'ばくおんぱ':{type:'normal',cat:'特'}, 'テラバースト':{type:'normal',cat:'特'},
+  'ちきゅうなげ':{type:'fighting',cat:'物'}, 'ソニックブーム':{type:'normal',cat:'特'},
+  // --- ノーマル 変化技 ---
+  'メロメロ':{type:'normal',cat:'変'}, 'しぜんのちから':{type:'normal',cat:'変'}, 'のろい':{type:'ghost',cat:'変'},
+  'かげぶんしん':{type:'normal',cat:'変'}, 'まもる':{type:'normal',cat:'変'}, 'みがわり':{type:'normal',cat:'変'},
+  'しんぴのまもり':{type:'normal',cat:'変'}, 'ちょうはつ':{type:'dark',cat:'変'}, 'じこさいせい':{type:'normal',cat:'変'},
+  'タマゴうみ':{type:'normal',cat:'変'}, 'ねむる':{type:'psychic',cat:'変'}, 'つるぎのまい':{type:'normal',cat:'変'},
+  'てっぺき':{type:'steel',cat:'変'}, 'わるだくみ':{type:'dark',cat:'変'}, 'めいそう':{type:'psychic',cat:'変'},
+  'りゅうのまい':{type:'dragon',cat:'変'}, 'ちょうのまい':{type:'bug',cat:'変'}, 'コットンガード':{type:'grass',cat:'変'},
+  'バトンタッチ':{type:'normal',cat:'変'}, 'ドわすれ':{type:'psychic',cat:'変'}, 'ほえる':{type:'normal',cat:'変'},
+  'なきごえ':{type:'normal',cat:'変'}, 'しっぽをふる':{type:'normal',cat:'変'}, 'いやなおと':{type:'normal',cat:'変'},
+  'すなかけ':{type:'ground',cat:'変'}, 'あくまのキッス':{type:'normal',cat:'変'},
+  // --- 炎 ---
+  'ひのこ':{type:'fire',cat:'特'}, 'かえんほうしゃ':{type:'fire',cat:'特'}, 'だいもんじ':{type:'fire',cat:'特'},
+  'オーバーヒート':{type:'fire',cat:'特'}, 'フレアドライブ':{type:'fire',cat:'物'}, 'かえんぐるま':{type:'fire',cat:'物'},
+  'ねっぷう':{type:'fire',cat:'特'}, 'ブレイズキック':{type:'fire',cat:'物'}, 'フレアソング':{type:'fire',cat:'特'},
+  'せいなるほのお':{type:'fire',cat:'特'}, 'ほのおのパンチ':{type:'fire',cat:'物'}, 'ほのおのキバ':{type:'fire',cat:'物'},
+  'ふんえん':{type:'fire',cat:'特'}, 'あおいほのお':{type:'fire',cat:'特'}, 'マグマストーム':{type:'fire',cat:'特'},
+  'ほのおのうず':{type:'fire',cat:'特'}, 'ほのおのまい':{type:'fire',cat:'特'}, 'にほんばれ':{type:'fire',cat:'変'},
+  'バーニングジェラシー':{type:'fire',cat:'特'}, 'いばる':{type:'normal',cat:'変'},
+  // --- 水 ---
+  'みずでっぽう':{type:'water',cat:'特'}, 'なみのり':{type:'water',cat:'特'}, 'ハイドロポンプ':{type:'water',cat:'特'},
+  'たきのぼり':{type:'water',cat:'物'}, 'アクアジェット':{type:'water',cat:'物'}, 'アクアテール':{type:'water',cat:'物'},
+  'アクアブレイク':{type:'water',cat:'物'}, 'ねっとう':{type:'water',cat:'特'}, 'こうそくスピン':{type:'normal',cat:'物'},
+  'シェルブレード':{type:'water',cat:'物'}, 'ダイビング':{type:'water',cat:'物'}, 'ハイドロカノン':{type:'water',cat:'特'},
+  'みずのはどう':{type:'water',cat:'特'}, 'うずしお':{type:'water',cat:'特'}, 'ミストボール':{type:'psychic',cat:'特'},
+  'こんげんのはどう':{type:'water',cat:'特'}, 'アクアリング':{type:'water',cat:'変'}, 'ほたるび':{type:'bug',cat:'変'},
+  'ウォーターシュリケン':{type:'water',cat:'物'}, 'あめごい':{type:'water',cat:'変'},
+  // --- 電気 ---
+  'でんきショック':{type:'electric',cat:'特'}, '10まんボルト':{type:'electric',cat:'特'}, 'かみなり':{type:'electric',cat:'特'},
+  'かみなりパンチ':{type:'electric',cat:'物'}, 'スパーク':{type:'electric',cat:'物'}, 'でんじほう':{type:'electric',cat:'特'},
+  'ほうでん':{type:'electric',cat:'特'}, 'ボルテッカー':{type:'electric',cat:'物'}, 'ワイルドボルト':{type:'electric',cat:'物'},
+  'エレキボール':{type:'electric',cat:'特'}, 'ライジングボルト':{type:'electric',cat:'特'}, 'でんじは':{type:'electric',cat:'変'},
+  'ボルトチェンジ':{type:'electric',cat:'特'}, 'かみなりのキバ':{type:'electric',cat:'物'}, 'プラズマフィスト':{type:'electric',cat:'物'},
+  'でんげきは':{type:'electric',cat:'特'}, 'じゅうでん':{type:'electric',cat:'変'}, 'エレキフィールド':{type:'electric',cat:'変'},
+  'エレキネット':{type:'electric',cat:'特'}, 'らいげき':{type:'electric',cat:'特'}, 'クロスサンダー':{type:'electric',cat:'特'},
+  // --- 草 ---
+  'つるのムチ':{type:'grass',cat:'物'}, 'はっぱカッター':{type:'grass',cat:'物'}, 'ソーラービーム':{type:'grass',cat:'特'},
+  'リーフブレード':{type:'grass',cat:'物'}, 'ウッドハンマー':{type:'grass',cat:'物'}, 'タネばくだん':{type:'grass',cat:'物'},
+  'やどりぎのタネ':{type:'grass',cat:'変'}, 'ねむりごな':{type:'grass',cat:'変'}, 'しびれごな':{type:'grass',cat:'変'},
+  'キノコのほうし':{type:'grass',cat:'変'}, 'リーフストーム':{type:'grass',cat:'特'}, 'エナジーボール':{type:'grass',cat:'特'},
+  'タネマシンガン':{type:'grass',cat:'物'}, 'くさむすび':{type:'grass',cat:'特'}, 'パワーウィップ':{type:'grass',cat:'物'},
+  'マジカルリーフ':{type:'grass',cat:'特'}, 'ギガドレイン':{type:'grass',cat:'特'}, 'はなふぶき':{type:'grass',cat:'特'},
+  'グラスフィールド':{type:'grass',cat:'変'}, 'グラススライダー':{type:'grass',cat:'物'}, 'はっぱマシンガン':{type:'grass',cat:'物'},
+  'フラワーガード':{type:'grass',cat:'変'},
+  // --- こおり ---
+  'こおりのつぶて':{type:'ice',cat:'物'}, 'れいとうビーム':{type:'ice',cat:'特'}, 'ふぶき':{type:'ice',cat:'特'},
+  'つららばり':{type:'ice',cat:'物'}, 'フリーズドライ':{type:'ice',cat:'特'}, 'こごえるかぜ':{type:'ice',cat:'特'},
+  'つららおとし':{type:'ice',cat:'物'}, 'こおりのキバ':{type:'ice',cat:'物'}, 'ぜったいれいど':{type:'ice',cat:'特'},
+  'オーロラビーム':{type:'ice',cat:'特'}, 'アイススピナー':{type:'ice',cat:'物'}, 'あられ':{type:'ice',cat:'変'},
+  'れいとうパンチ':{type:'ice',cat:'物'},
+  // --- 格闘 ---
+  'からてチョップ':{type:'fighting',cat:'物'}, 'マッハパンチ':{type:'fighting',cat:'物'}, 'かわらわり':{type:'fighting',cat:'物'},
+  'インファイト':{type:'fighting',cat:'物'}, 'きあいパンチ':{type:'fighting',cat:'物'}, 'しんくうは':{type:'fighting',cat:'特'},
+  'スカイアッパー':{type:'fighting',cat:'物'}, 'アームハンマー':{type:'fighting',cat:'物'}, 'きあいだま':{type:'fighting',cat:'特'},
+  'はっけい':{type:'fighting',cat:'物'}, 'ばくれつけん':{type:'fighting',cat:'物'}, 'ドレインパンチ':{type:'fighting',cat:'物'},
+  'ローキック':{type:'fighting',cat:'物'}, 'とびげり':{type:'fighting',cat:'物'}, 'とびひざげり':{type:'fighting',cat:'物'},
+  'クロスチョップ':{type:'fighting',cat:'物'}, 'グロウパンチ':{type:'fighting',cat:'物'}, 'あてみなげ':{type:'fighting',cat:'物'},
+  'せいけん':{type:'fighting',cat:'物'}, 'コメットパンチ':{type:'steel',cat:'物'},
+  // --- 毒 ---
+  'どくづき':{type:'poison',cat:'物'}, 'ダストシュート':{type:'poison',cat:'物'}, 'ヘドロ爆弾':{type:'poison',cat:'特'},
+  'ヘドロウェーブ':{type:'poison',cat:'特'}, 'どくどく':{type:'poison',cat:'変'}, 'クロスポイズン':{type:'poison',cat:'物'},
+  'ベノムショック':{type:'poison',cat:'特'}, 'どくびし':{type:'poison',cat:'変'}, 'どくどくのキバ':{type:'poison',cat:'物'},
+  'どくガス':{type:'poison',cat:'変'}, 'ヘドロこうげき':{type:'poison',cat:'特'}, 'ヘドロこうか':{type:'poison',cat:'変'},
+  'ベノムトラップ':{type:'poison',cat:'変'},
+  // --- 地面 ---
+  'じしん':{type:'ground',cat:'物'}, 'じならし':{type:'ground',cat:'物'}, 'あなをほる':{type:'ground',cat:'物'},
+  'じわれ':{type:'ground',cat:'物'}, 'マッドショット':{type:'ground',cat:'特'}, 'じめんのはどう':{type:'ground',cat:'特'},
+  '10まんばりき':{type:'ground',cat:'物'}, 'だいちのちから':{type:'ground',cat:'特'}, 'すなじごく':{type:'ground',cat:'物'},
+  'どろばくだん':{type:'ground',cat:'特'}, 'どろかけ':{type:'ground',cat:'特'}, 'すなあらし':{type:'rock',cat:'変'},
+  'じゃれつく':{type:'fairy',cat:'物'},
+  // --- 飛行 ---
+  'つばさでうつ':{type:'flying',cat:'物'}, 'エアカッター':{type:'flying',cat:'特'}, 'エアスラッシュ':{type:'flying',cat:'特'},
+  'ぼうふう':{type:'flying',cat:'特'}, 'ゴッドバード':{type:'flying',cat:'物'}, 'ブレイブバード':{type:'flying',cat:'物'},
+  'アクロバット':{type:'flying',cat:'物'}, 'ドリルくちばし':{type:'flying',cat:'物'}, 'ふきとばし':{type:'normal',cat:'変'},
+  'おいかぜ':{type:'flying',cat:'変'}, 'つばめがえし':{type:'flying',cat:'物'}, 'エアロブラスト':{type:'flying',cat:'特'},
+  'ハリケーン':{type:'flying',cat:'特'}, 'はがねのつばさ':{type:'steel',cat:'物'}, 'かっくうきゃく':{type:'flying',cat:'物'},
+  // --- エスパー ---
+  'ねんりき':{type:'psychic',cat:'特'}, 'サイケこうせん':{type:'psychic',cat:'特'}, 'サイコキネシス':{type:'psychic',cat:'特'},
+  'サイコブースト':{type:'psychic',cat:'特'}, 'サイコカッター':{type:'psychic',cat:'物'}, 'ゼンのちから':{type:'psychic',cat:'特'},
+  'シンクロノイズ':{type:'psychic',cat:'特'}, 'サイコファング':{type:'psychic',cat:'物'}, 'リフレクター':{type:'psychic',cat:'変'},
+  'ひかりのかべ':{type:'psychic',cat:'変'}, 'トリックルーム':{type:'psychic',cat:'変'}, 'ワンダールーム':{type:'psychic',cat:'変'},
+  'マジックルーム':{type:'psychic',cat:'変'}, 'ねこのて':{type:'normal',cat:'変'}, 'サイコブレイク':{type:'psychic',cat:'物'},
+  'サイコショック':{type:'psychic',cat:'特'}, 'サイコウェーブ':{type:'psychic',cat:'特'}, 'ゆめくい':{type:'psychic',cat:'特'},
+  'みらいよち':{type:'psychic',cat:'特'}, 'テレキネシス':{type:'psychic',cat:'変'}, 'サイコフィールド':{type:'psychic',cat:'変'},
+  // --- 虫 ---
+  'むしのさざめき':{type:'bug',cat:'特'}, 'シグナルビーム':{type:'bug',cat:'特'}, 'むしくい':{type:'bug',cat:'物'},
+  'とんぼがえり':{type:'bug',cat:'物'}, 'メガホーン':{type:'bug',cat:'物'}, 'きゅうけつ':{type:'bug',cat:'物'},
+  'ぎんいろのかぜ':{type:'bug',cat:'特'}, 'こうそくいどう':{type:'psychic',cat:'変'}, 'シザークロス':{type:'bug',cat:'物'},
+  'むしのしらせ':{type:'bug',cat:'変'}, 'ぎんいろのちから':{type:'bug',cat:'特'},
+  // --- 岩 ---
+  'いわおとし':{type:'rock',cat:'物'}, 'いわくだき':{type:'fighting',cat:'物'}, 'ストーンエッジ':{type:'rock',cat:'物'},
+  'げんしのちから':{type:'rock',cat:'特'}, 'パワージェム':{type:'rock',cat:'特'}, 'ロックブラスト':{type:'rock',cat:'物'},
+  'ロッククライム':{type:'normal',cat:'物'}, 'ステルスロック':{type:'rock',cat:'変'}, 'いわなだれ':{type:'rock',cat:'物'},
+  'がんせきふうじ':{type:'rock',cat:'物'}, 'うちおとす':{type:'rock',cat:'物'}, 'ロックカット':{type:'rock',cat:'変'},
+  'アクセルロック':{type:'rock',cat:'物'},
+  // --- ゴースト ---
+  'したでなめる':{type:'ghost',cat:'物'}, 'ナイトヘッド':{type:'ghost',cat:'特'}, 'シャドーボール':{type:'ghost',cat:'特'},
+  'シャドークロー':{type:'ghost',cat:'物'}, 'シャドーパンチ':{type:'ghost',cat:'物'}, 'おどろかす':{type:'ghost',cat:'物'},
+  'たたりめ':{type:'ghost',cat:'特'}, 'ファントムフォース':{type:'ghost',cat:'物'}, 'かげうち':{type:'ghost',cat:'物'},
+  'シャドーダイブ':{type:'ghost',cat:'物'}, 'ミラーショット':{type:'steel',cat:'特'}, 'ポルターガイスト':{type:'ghost',cat:'物'},
+  // --- ドラゴン ---
+  'りゅうのいぶき':{type:'dragon',cat:'特'}, 'りゅうせいぐん':{type:'dragon',cat:'特'}, 'ドラゴンクロー':{type:'dragon',cat:'物'},
+  'げきりん':{type:'dragon',cat:'物'}, 'ドラゴンテール':{type:'dragon',cat:'物'}, 'ドラゴンダイブ':{type:'dragon',cat:'物'},
+  'りゅうのはどう':{type:'dragon',cat:'特'}, 'ダブルチョップ':{type:'dragon',cat:'物'}, 'アウトレイジ':{type:'dragon',cat:'物'},
+  'りゅうのいかり':{type:'dragon',cat:'特'}, 'ドラゴンアロー':{type:'dragon',cat:'物'},
+  // --- 悪 ---
+  'かみつく':{type:'dark',cat:'物'}, 'かみくだく':{type:'dark',cat:'物'}, 'あくのはどう':{type:'dark',cat:'特'},
+  'イカサマ':{type:'dark',cat:'物'}, 'ふいうち':{type:'dark',cat:'物'}, 'つじぎり':{type:'dark',cat:'物'},
+  'だましうち':{type:'dark',cat:'物'}, 'ナイトバースト':{type:'dark',cat:'特'}, 'しっぺがえし':{type:'dark',cat:'物'},
+  'まとわりつく':{type:'bug',cat:'特'},
+  // --- 鋼 ---
+  'メタルクロー':{type:'steel',cat:'物'}, 'アイアンヘッド':{type:'steel',cat:'物'}, 'ラスターカノン':{type:'steel',cat:'特'},
+  'バレットパンチ':{type:'steel',cat:'物'}, 'ジャイロボール':{type:'steel',cat:'物'}, 'スマートホーン':{type:'steel',cat:'物'},
+  'メタルバースト':{type:'steel',cat:'物'}, 'アイアンテール':{type:'steel',cat:'物'},
+  // --- フェアリー ---
+  'ようせいのかぜ':{type:'fairy',cat:'特'}, 'ドレインキッス':{type:'fairy',cat:'特'}, 'ムーンフォース':{type:'fairy',cat:'特'},
+  'つきのひかり':{type:'fairy',cat:'変'}, 'マジカルシャイン':{type:'fairy',cat:'特'}, 'スピリットブレイク':{type:'fairy',cat:'物'},
+  'メテオシャワー':{type:'rock',cat:'物'},
+};
+
+// 技名からタイプ・分類を推論（MOVE_DATAにあれば優先、なければnull）
+function lookupMove(name) {
+  if (!name) return null;
+  return MOVE_DATA[name] || null;
+}
 
 // ====== 持ち物（ポケモンチャンピオンズ実装準拠） ======
 // メガストーンはROSTERで別形態として扱うため省略
@@ -418,6 +681,76 @@ function isMega(poke) {
   const it = ITEM_MAP[poke.item];
   return !!(it && it.group === 'mega');
 }
+
+// ====== とくせい辞書 ======
+// タイプ無効 / ダメージ軽減 / 威力強化 / 優先度 / 特殊効果 など
+// group: 'immunity'=特定タイプ無効, 'absorb'=吸収, 'resist'=軽減, 'boost'=威力アップ,
+//        'defense'=被ダメ軽減, 'weather'=天候, 'priority'=優先度, 'intimidate'=威嚇系,
+//        'special'=その他戦略
+const ABILITIES = [
+  // --- タイプ無効系 ---
+  {id:'ふゆう', jp:'ふゆう', group:'immunity', immuneTypes:['じめん'], desc:'じめん技無効'},
+  {id:'ちょすい', jp:'ちょすい', group:'absorb', immuneTypes:['みず'], desc:'みず技無効・HP回復'},
+  {id:'ちくでん', jp:'ちくでん', group:'absorb', immuneTypes:['でんき'], desc:'でんき技無効・HP回復'},
+  {id:'ひらいしん', jp:'ひらいしん', group:'absorb', immuneTypes:['でんき'], desc:'でんき技無効・特攻↑'},
+  {id:'でんきエンジン', jp:'でんきエンジン', group:'absorb', immuneTypes:['でんき'], desc:'でんき技無効・素早↑'},
+  {id:'よびみず', jp:'よびみず', group:'absorb', immuneTypes:['みず'], desc:'みず技無効・特攻↑'},
+  {id:'もらいび', jp:'もらいび', group:'absorb', immuneTypes:['ほのお'], desc:'ほのお技無効・ほのお技強化'},
+  {id:'そうしょく', jp:'そうしょく', group:'absorb', immuneTypes:['くさ'], desc:'くさ技無効・攻撃↑'},
+  {id:'くさのけがわ', jp:'くさのけがわ', group:'resist', desc:'くさタイプ受け耐性↑'},
+  {id:'たいねつ', jp:'たいねつ', group:'resist', resistTypes:['ほのお'], desc:'ほのお技半減・やけど無効'},
+  {id:'あついしぼう', jp:'あついしぼう', group:'resist', resistTypes:['ほのお','こおり'], desc:'ほのお/こおり技半減'},
+  {id:'ぼうおん', jp:'ぼうおん', group:'special', desc:'音技無効'},
+  {id:'ぼうじん', jp:'ぼうじん', group:'special', desc:'粉・ほうし技無効'},
+  // --- 特殊防御/軽減 ---
+  {id:'マルチスケイル', jp:'マルチスケイル', group:'defense', desc:'HP満タン時被ダメ半減'},
+  {id:'フィルター', jp:'フィルター', group:'defense', desc:'効果抜群技の被ダメ3/4'},
+  {id:'ハードロック', jp:'ハードロック', group:'defense', desc:'効果抜群技の被ダメ3/4'},
+  {id:'もふもふ', jp:'もふもふ', group:'defense', desc:'接触技半減・ほのお被ダメ2倍'},
+  {id:'ファーコート', jp:'ファーコート', group:'defense', desc:'物理被ダメ半減'},
+  {id:'マジックガード', jp:'マジックガード', group:'defense', desc:'攻撃技以外のダメージ無効'},
+  {id:'ミラクルスキン', jp:'ミラクルスキン', group:'defense', desc:'変化技命中50%に'},
+  // --- 威力強化 ---
+  {id:'てきおうりょく', jp:'てきおうりょく', group:'boost', boostMul:1.33, desc:'タイプ一致技×2(STAB1.5→2)'},
+  {id:'テクニシャン', jp:'テクニシャン', group:'boost', boostMul:1.5, condition:'lowBP', desc:'威力60以下の技×1.5'},
+  {id:'ちからずく', jp:'ちからずく', group:'boost', boostMul:1.3, desc:'追加効果技×1.3(効果は消える)'},
+  {id:'メガランチャー', jp:'メガランチャー', group:'boost', boostMul:1.5, desc:'波動技×1.5'},
+  {id:'てつのこぶし', jp:'てつのこぶし', group:'boost', boostMul:1.2, desc:'パンチ技×1.2'},
+  {id:'すなのちから', jp:'すなのちから', group:'boost', boostMul:1.3, condition:'sand', desc:'砂嵐時 岩/地/鋼×1.3'},
+  {id:'アナライズ', jp:'アナライズ', group:'boost', boostMul:1.3, condition:'slower', desc:'後攻時×1.3'},
+  {id:'いろめがね', jp:'いろめがね', group:'special', desc:'いまひとつを等倍化'},
+  {id:'かたやぶり', jp:'かたやぶり', group:'special', desc:'相手のとくせいを無視'},
+  {id:'ターボブレイズ', jp:'ターボブレイズ', group:'special', desc:'相手のとくせいを無視'},
+  {id:'テラボルテージ', jp:'テラボルテージ', group:'special', desc:'相手のとくせいを無視'},
+  // --- 優先度/素早さ ---
+  {id:'イタズラゴコロ', jp:'イタズラゴコロ', group:'priority', desc:'変化技+1優先度'},
+  {id:'はやてのつばさ', jp:'はやてのつばさ', group:'priority', desc:'HP満タン時 ひこう技+1優先度'},
+  {id:'ヒーリングシフト', jp:'ヒーリングシフト', group:'priority', desc:'回復技+3優先度'},
+  {id:'かるわざ', jp:'かるわざ', group:'special', desc:'道具消費後 素早×2'},
+  // --- 天候 ---
+  {id:'ひでり', jp:'ひでり', group:'weather', weather:'sun', desc:'場に出ると晴れ'},
+  {id:'あめふらし', jp:'あめふらし', group:'weather', weather:'rain', desc:'場に出ると雨'},
+  {id:'すなおこし', jp:'すなおこし', group:'weather', weather:'sand', desc:'場に出ると砂嵐'},
+  {id:'ゆきふらし', jp:'ゆきふらし', group:'weather', weather:'hail', desc:'場に出ると雪/あられ'},
+  // --- 威嚇系/サポート ---
+  {id:'いかく', jp:'いかく', group:'intimidate', desc:'登場時 相手物理攻撃↓'},
+  {id:'プレッシャー', jp:'プレッシャー', group:'special', desc:'相手のPP消費×2'},
+  {id:'かげふみ', jp:'かげふみ', group:'special', desc:'相手交代不可'},
+  {id:'ありじごく', jp:'ありじごく', group:'special', desc:'相手交代不可(浮遊除く)'},
+  {id:'マグマのよろい', jp:'マグマのよろい', group:'special', desc:'こおり状態無効'},
+  // --- その他戦略 ---
+  {id:'ふしぎなうろこ', jp:'ふしぎなうろこ', group:'defense', desc:'状態異常時 防御↑'},
+  {id:'こんじょう', jp:'こんじょう', group:'special', desc:'状態異常時 攻撃↑'},
+  {id:'ヨガパワー', jp:'ヨガパワー', group:'boost', boostMul:2.0, condition:'physical', desc:'物理威力×2'},
+  {id:'ちからもち', jp:'ちからもち', group:'boost', boostMul:2.0, condition:'physical', desc:'物理威力×2'},
+  {id:'すてみ', jp:'すてみ', group:'boost', boostMul:1.2, desc:'反動技×1.2'},
+  {id:'スナイパー', jp:'スナイパー', group:'special', desc:'急所時×2.25'},
+  {id:'かそく', jp:'かそく', group:'special', desc:'毎ターン素早↑'},
+  {id:'バトルスイッチ', jp:'バトルスイッチ', group:'special', desc:'フォルム切替'},
+  {id:'さいせいりょく', jp:'さいせいりょく', group:'special', desc:'交代時HP1/3回復'},
+  {id:'ムラっけ', jp:'ムラっけ', group:'special', desc:'毎ターン能力乱上下'},
+];
+const ABILITY_MAP = Object.fromEntries(ABILITIES.map(a => [a.id, a]));
 
 // 持ち物のセレクタ用グループ定義
 const ITEM_GROUPS = [
@@ -1236,6 +1569,383 @@ function PokemonPicker({onSelect, onClose}) {
   );
 }
 
+// ====== 役割自動解析（TeamGuide用） ======
+// ポケモンのステータス・技・持ち物・とくせいから役割を自動推定
+function analyzeRole(poke) {
+  if (!poke) return null;
+  const s = getPokeStatsObj(poke.id);
+  const spd = poke.spd || 0;
+  const hp = s?.hp || 80, atk = s?.atk || 80, def = s?.def || 80, spa = s?.spa || 80, sdef = s?.sdef || 80;
+  const bulk = (hp * (def + sdef)) / 100;
+  const atkPower = Math.max(atk, spa);
+  const isPhys = atk > spa * 1.2;
+  const isSpec = spa > atk * 1.2;
+
+  const moves = poke.moves || [];
+  const mvNames = moves.map(m => m?.name).filter(Boolean);
+  const SETUP_MOVES = ['つるぎのまい','りゅうのまい','わるだくみ','めいそう','ちょうのまい','コットンガード','てっぺき','ロックカット','こうそくいどう','ちょうのまい','からをやぶる'];
+  const RECOVERY_MOVES = ['じこさいせい','タマゴうみ','ねむる','つきのひかり','アクアリング','やどりぎのタネ','ギガドレイン','ドレインパンチ','ドレインキッス'];
+  const HAZARD_MOVES = ['ステルスロック','どくびし','まきびし','ねばねばネット'];
+  const PIVOT_MOVES = ['とんぼがえり','ボルトチェンジ','バトンタッチ'];
+  const STATUS_MOVES = ['どくどく','でんじは','キノコのほうし','ねむりごな','しびれごな','おにび','みがわり','ちょうはつ'];
+  const SCREEN_MOVES = ['リフレクター','ひかりのかべ','しんぴのまもり'];
+
+  const hasSetup = mvNames.some(n => SETUP_MOVES.includes(n));
+  const setupName = mvNames.find(n => SETUP_MOVES.includes(n));
+  const hasRecovery = mvNames.some(n => RECOVERY_MOVES.includes(n));
+  const hasHazards = mvNames.some(n => HAZARD_MOVES.includes(n));
+  const hasPivot = mvNames.some(n => PIVOT_MOVES.includes(n));
+  const hasStatus = mvNames.some(n => STATUS_MOVES.includes(n));
+  const hasScreen = mvNames.some(n => SCREEN_MOVES.includes(n));
+  const hasPriority = moves.some(m => {
+    const p = (m?.priority != null) ? m.priority : (MOVE_PRIORITY[m?.name] ?? 0);
+    return p > 0 && m?.cat !== '変';
+  });
+  const priMoves = moves.filter(m => {
+    const p = (m?.priority != null) ? m.priority : (MOVE_PRIORITY[m?.name] ?? 0);
+    return p > 0 && m?.cat !== '変';
+  }).map(m => m.name);
+
+  const item = ITEM_MAP[poke.item];
+  const ab = ABILITY_MAP[poke.ability];
+
+  // 主役割（1つ）
+  let primary, desc;
+  if (poke.item === 'choice_scarf') {
+    primary = '🏃 スカウト/抜き役';
+    desc = 'こだわりスカーフで素早さ1.5倍。最速を取って弱った相手を上から処理する「抜き役」。終盤や中盤の切り札に。';
+  } else if (poke.item === 'choice_band') {
+    primary = '💥 こだわり物理アタッカー';
+    desc = 'こだわりハチマキで物理火力1.5倍。技をロックされるが一撃の威力が高い。タイプ受けされない対面で押し込む。';
+  } else if (poke.item === 'choice_specs') {
+    primary = '💥 こだわり特殊アタッカー';
+    desc = 'こだわりメガネで特殊火力1.5倍。技固定だが火力は全役割中トップクラス。';
+  } else if (hasHazards) {
+    primary = '🪤 設置役（ステロ/まきびし）';
+    desc = '相手の登場時にダメージを蓄積する罠を撒く。初手に出して設置後はサポートに回るか交代。';
+  } else if (hasScreen) {
+    primary = '🛡 壁貼り / 補助';
+    desc = 'リフレクター/ひかりのかべで味方を守る。初手で展開し、エースの積み技サポートに。';
+  } else if (hasSetup && bulk >= 90) {
+    primary = '🔥 耐久積みアタッカー';
+    desc = `受けながら「${setupName}」で強化、硬さを活かして積み展開を狙う。全抜き筋あり。`;
+  } else if (hasSetup) {
+    primary = '⚡ 積みエース（全抜き候補）';
+    desc = `「${setupName}」で一気に強化、弱点を突かれる前に相手を崩す高速エース。隙を見て積む。`;
+  } else if (hasRecovery && bulk >= 130) {
+    primary = '🛡 受け / 起点作り';
+    desc = '高耐久で技を受けつつ回復。相手のエースを流したり、状態異常で崩す役。';
+  } else if (ab?.group === 'weather') {
+    const wn = {sun:'晴れ',rain:'雨',sand:'砂嵐',hail:'雪'}[ab.weather];
+    primary = `☀ ${wn}エース / 天候始動`;
+    desc = `${ab.jp}で場に${wn}を展開。天候パーティの起点として先発推奨。`;
+  } else if (hasPivot && spd >= 90) {
+    primary = '🔄 高速サイクル / 展開役';
+    desc = `「${mvNames.find(n=>PIVOT_MOVES.includes(n))}」で有利対面に交代しながら削る。相手の選出を揺さぶる。`;
+  } else if (ab?.id === 'いかく') {
+    primary = '😤 いかく物理受け';
+    desc = 'いかくで相手物理攻撃を1段階ダウン。物理型相手に繰り出すと安定。';
+  } else if (spd >= 110 && atkPower >= 100) {
+    primary = '🏹 高速アタッカー';
+    desc = `S${spd}で大半を抜ける。先手から高火力で押し切る。`;
+  } else if (isPhys) {
+    primary = '🥊 物理アタッカー';
+    desc = `A${atk}中心。物理技で押し込むパンチャー役。`;
+  } else if (isSpec) {
+    primary = '✨ 特殊アタッカー';
+    desc = `C${spa}中心。特殊技で押し込む役。`;
+  } else if (hasStatus) {
+    primary = '⚙ 補助 / 崩し役';
+    desc = '状態異常で相手を機能停止させ、味方のエースを通しやすくする補助役。';
+  } else {
+    primary = '⚖ バランス型';
+    desc = '特化が少なく汎用的。受けとも攻めともどちらでも動ける。';
+  }
+
+  // タグ（補足能力）
+  const tags = [];
+  if (hasPriority) tags.push(`先制技(${priMoves.join('/')})`);
+  if (ab?.group === 'weather') tags.push(`${ab.jp}`);
+  if (ab?.id === 'イタズラゴコロ') tags.push('イタズラ先制補助');
+  if (ab?.id === 'いかく' && primary && !primary.includes('いかく')) tags.push('いかく');
+  if (ab?.id === 'マルチスケイル') tags.push('満タンで半減');
+  if (ab?.id === 'マジックガード') tags.push('定数ダメ無効');
+  if (ab?.group === 'immunity' || ab?.group === 'absorb') tags.push(`${ab.immuneTypes?.map(t=>TYPE_JP[t]||t).join('/')}無効`);
+  if (item?.id === 'focus_sash') tags.push('タスキ確1耐え');
+  if (item?.id === 'leftovers') tags.push('たべのこし');
+  if (item?.id === 'life_orb') tags.push('いのちのたま(×1.3)');
+
+  // 使い方Tips
+  const tips = [];
+  if (hasSetup) tips.push(`受け出し安全 or 相手が積まれたくない場面で「${setupName}」を撃つ`);
+  if (hasRecovery) tips.push('HP50%前後で回復、HP満タンを維持し展開を長く');
+  if (hasPivot) tips.push('不利対面なら交代技で仕切り直し、有利対面を作る');
+  if (poke.item === 'choice_scarf') tips.push('終盤に取っておき、一掃できるHPラインまで相手を削る');
+  if (poke.item === 'choice_band' || poke.item === 'choice_specs') tips.push('選出前に「タイプ一致・抜群」を取れる対面を読む、状況に応じて交代');
+  if (hasHazards) tips.push('初手1ターン目に設置、相手の交代で更にダメを稼ぐ');
+  if (spd >= 120) tips.push(`S${spd}は最速級。ほぼ全ての相手を抜ける`);
+  else if (spd <= 50 && !mvNames.includes('トリックルーム')) tips.push(`S${spd}は遅め。一撃耐えて撃つ or 先制技でカバー`);
+  if (ab?.id === 'いかく') tips.push('物理アタッカーに対面させると一発目が軽くなる');
+
+  return {primary, desc, tags, tips, atkPower, isPhys, isSpec, bulk, spd, hasSetup, hasRecovery, hasHazards, hasPivot, hasPriority, setupName};
+}
+
+// ====== TeamGuide（自軍の使い方解説） ======
+function TeamGuide({team}) {
+  const filled = team.filter(Boolean);
+  if (filled.length === 0) {
+    return (
+      <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-center text-sm text-gray-500">
+        📖 使い方ガイド: 自軍を登録すると、各ポケの役割や勝ち筋を自動解説します
+      </div>
+    );
+  }
+
+  // 各ポケの役割分析
+  const analyses = team.map(p => p ? analyzeRole(p) : null);
+
+  // 初手推奨: 高速アタッカー / 設置役 / いかく / 天候始動 を優先
+  const leadCandidates = team.map((p, i) => {
+    if (!p) return null;
+    const a = analyses[i];
+    let score = 0;
+    const reasons = [];
+    // 速度が高いほど先発向き
+    if (a.spd >= 120) { score += 4; reasons.push(`S${a.spd}で多くの相手を抜ける`); }
+    else if (a.spd >= 100) { score += 2; reasons.push(`S${a.spd}でそこそこ速い`); }
+    // 設置役は先発
+    if (a.hasHazards) { score += 5; reasons.push('設置役（初手でステロ/まきびし設置）'); }
+    // 壁貼りも先発
+    if (a.primary && a.primary.includes('壁貼り')) { score += 4; reasons.push('壁貼りで味方のお膳立て'); }
+    // 天候始動
+    if (a.primary && (a.primary.includes('晴れ')||a.primary.includes('雨')||a.primary.includes('砂嵐')||a.primary.includes('雪'))) {
+      score += 4; reasons.push('場に出るだけで天候を展開');
+    }
+    // いかく
+    if (a.tags.includes('いかく')) { score += 2; reasons.push('いかくで相手物理を下げる'); }
+    // 高火力かつ速い=先手取って叩ける
+    if (a.atkPower >= 110 && a.spd >= 100) { score += 2; reasons.push('高火力+速度で先制圧力'); }
+    // こだわりスカーフは先発より終盤
+    if (p.item === 'choice_scarf') { score -= 2; reasons.push('⚠ スカーフは終盤温存が◎'); }
+    // 高耐久の受け型は初手で出しにくい
+    if (a.bulk >= 150 && !a.hasHazards) { score -= 1; reasons.push('受け型は交代で出すのが安全'); }
+    return {poke:p, idx:i, score, reasons, analysis:a};
+  }).filter(Boolean).sort((a,b) => b.score - a.score);
+
+  const top = leadCandidates[0];
+
+  // 勝ち筋（Win Condition）: 最高火力ポケ+役割で特定
+  const aces = team.map((p, i) => {
+    if (!p) return null;
+    const a = analyses[i];
+    let score = a.atkPower;
+    if (a.hasSetup) score += 40; // 積み展開でエース候補
+    if (p.item === 'choice_band' || p.item === 'choice_specs') score += 30;
+    if (p.item === 'life_orb') score += 20;
+    if (a.spd >= 110) score += 15;
+    return {poke:p, idx:i, score, analysis:a};
+  }).filter(Boolean).sort((a,b) => b.score - a.score);
+
+  const ace = aces[0];
+  const supports = aces.slice(1).filter(x => {
+    const a = x.analysis;
+    return a.hasHazards || a.hasScreen || a.tags.some(t=>t.includes('いかく')) || a.hasPivot;
+  }).slice(0, 2);
+
+  // チーム弱点分析: 3体以上が弱点のタイプ
+  const weaknessCount = {};
+  TYPES.forEach(t => { weaknessCount[t] = 0; });
+  filled.forEach(p => {
+    TYPES.forEach(atk => {
+      const m = defensiveMult(atk, p.types);
+      if (m > 1) weaknessCount[atk] += (m >= 4 ? 2 : 1);
+      // とくせい無効/半減
+      const ab = ABILITY_MAP[p.ability];
+      if (ab && (ab.group === 'immunity' || ab.group === 'absorb') && ab.immuneTypes?.includes(atk)) {
+        weaknessCount[atk] -= 1;
+      }
+    });
+  });
+  const dangerTypes = TYPES
+    .filter(t => weaknessCount[t] >= 3)
+    .sort((a,b) => weaknessCount[b] - weaknessCount[a]);
+
+  // 苦手対策: 各dangerTypeに対して、抵抗/無効を持つポケを提案
+  const counters = dangerTypes.map(dt => {
+    const defenders = team.map((p, i) => {
+      if (!p) return null;
+      const m = defensiveMult(dt, p.types);
+      const ab = ABILITY_MAP[p.ability];
+      const abImmune = ab && (ab.group === 'immunity' || ab.group === 'absorb') && ab.immuneTypes?.includes(dt);
+      const abResist = ab && ab.group === 'resist' && ab.resistTypes?.includes(dt);
+      if (abImmune) return {poke:p, idx:i, note:`${ab.jp}で無効`, mult:0};
+      if (m < 1 || abResist) return {poke:p, idx:i, note:abResist?`${ab.jp}で半減`:`タイプ耐性×${m}`, mult:m};
+      return null;
+    }).filter(Boolean).sort((a,b) => a.mult - b.mult);
+    return {type:dt, count:weaknessCount[dt], defenders};
+  });
+
+  return (
+    <div className="space-y-3 mt-4 border-t-2 border-blue-200 pt-4">
+      <div className="flex items-center gap-2">
+        <div className="text-lg font-bold text-blue-900">📖 このチームの使い方</div>
+        <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">初心者向け自動解説</span>
+      </div>
+
+      {/* 初手推奨 */}
+      {top && (
+        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-3">
+          <div className="text-sm font-bold text-green-900 mb-1">🎯 初手（先発）おすすめ</div>
+          <div className="flex items-center gap-3">
+            <img src={pokeImg(top.poke)} onError={e=>{e.target.src=pokeImgFallback(top.poke)}} className="w-14 h-14 object-contain" />
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-base">{top.poke.jp}</div>
+              <div className="text-[11px] text-gray-600 mt-0.5">{top.analysis.primary}</div>
+              <div className="text-[11px] text-gray-700 mt-1">
+                <span className="font-bold text-green-700">理由:</span>
+                <ul className="ml-4 list-disc">
+                  {top.reasons.map((r,i) => <li key={i} className={r.startsWith('⚠')?'text-amber-700':''}>{r}</li>)}
+                </ul>
+              </div>
+            </div>
+          </div>
+          {leadCandidates.length > 1 && (
+            <div className="mt-2 pt-2 border-t border-green-200">
+              <div className="text-[10px] text-green-900 mb-1 font-bold">対戦相手によって切替候補:</div>
+              <div className="flex flex-wrap gap-1.5">
+                {leadCandidates.slice(1, 3).map(c => (
+                  <div key={c.idx} className="flex items-center gap-1 bg-white border border-green-200 rounded px-1.5 py-0.5 text-[10px]">
+                    <img src={pokeImg(c.poke)} onError={e=>{e.target.src=pokeImgFallback(c.poke)}} className="w-5 h-5 object-contain" />
+                    <span>{c.poke.jp}</span>
+                    <span className="text-gray-500">({c.reasons[0] || ''})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 勝ち筋 */}
+      {ace && (
+        <div className="bg-gradient-to-br from-orange-50 to-red-50 border-2 border-orange-300 rounded-lg p-3">
+          <div className="text-sm font-bold text-red-900 mb-1">🏆 勝ち筋（Win Condition）</div>
+          <div className="flex items-center gap-3">
+            <img src={pokeImg(ace.poke)} onError={e=>{e.target.src=pokeImgFallback(ace.poke)}} className="w-14 h-14 object-contain" />
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-base">{ace.poke.jp}<span className="ml-2 text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded">エース</span></div>
+              <div className="text-[11px] text-gray-600 mt-0.5">{ace.analysis.primary}</div>
+              <div className="text-[11px] text-gray-700 mt-1">{ace.analysis.desc}</div>
+            </div>
+          </div>
+          {supports.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-orange-200">
+              <div className="text-[10px] text-red-900 font-bold mb-1">お膳立て役（エースを通すサポート）:</div>
+              <div className="space-y-1">
+                {supports.map(s => (
+                  <div key={s.idx} className="flex items-center gap-2 text-[11px]">
+                    <img src={pokeImg(s.poke)} onError={e=>{e.target.src=pokeImgFallback(s.poke)}} className="w-6 h-6 object-contain" />
+                    <span className="font-bold">{s.poke.jp}</span>
+                    <span className="text-gray-600">→ {s.analysis.primary}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="mt-2 text-[11px] bg-white rounded p-2 border border-orange-200">
+            <div className="font-bold text-red-800 mb-0.5">💡 典型的な勝ちパターン:</div>
+            <div className="text-gray-700">
+              {ace.analysis.hasSetup
+                ? `① サポート役で相手のエースを削る or 状態異常 → ② ${ace.poke.jp}を安全に出して「${ace.analysis.setupName}」で積む → ③ 強化後に全抜きを狙う`
+                : supports.length > 0
+                ? `① 設置/壁/いかくでお膳立て → ② ${ace.poke.jp}を刺せる相手に繰り出す → ③ 高火力で押し切る`
+                : `① 有利対面を作って ${ace.poke.jp}を繰り出す → ② 高火力技で相手のエースを落とす → ③ 残りを抜き役（スカーフ持ち等）で処理`}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 苦手タイプ/対策 */}
+      {dangerTypes.length > 0 && (
+        <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-lg p-3">
+          <div className="text-sm font-bold text-amber-900 mb-1.5">⚠ チームの苦手タイプと対策</div>
+          <div className="space-y-2">
+            {counters.slice(0, 3).map(c => (
+              <div key={c.type} className="bg-white rounded p-2 border border-amber-200">
+                <div className="flex items-center gap-2 text-[11px] mb-1">
+                  <TypeBadge type={c.type} />
+                  <span className="text-red-700 font-bold">{c.count}体が弱点</span>
+                  <span className="text-gray-500">— {TYPE_JP[c.type]}技に注意</span>
+                </div>
+                {c.defenders.length > 0 ? (
+                  <div className="text-[11px] text-gray-700">
+                    <span className="font-bold text-green-700">受け役:</span>
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {c.defenders.slice(0, 3).map(d => (
+                        <span key={d.idx} className="inline-flex items-center gap-1 bg-green-50 border border-green-300 rounded px-1.5 py-0.5 text-[10px]">
+                          <img src={pokeImg(d.poke)} onError={e=>{e.target.src=pokeImgFallback(d.poke)}} className="w-4 h-4 object-contain" />
+                          <span className="font-bold">{d.poke.jp}</span>
+                          <span className="text-green-700">({d.note})</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-red-700 font-bold">⚠ 受け役なし — 積まれる前に先手で倒すか、交代駆け引きで対応</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-[10px] text-amber-800">
+            💡 対戦前の選出で、苦手タイプを持つ相手がいたら「受け役」は必ず選出に入れる
+          </div>
+        </div>
+      )}
+
+      {/* 各ポケの役割解説 */}
+      <div className="bg-white border-2 border-indigo-300 rounded-lg p-3">
+        <div className="text-sm font-bold text-indigo-900 mb-2">🎭 各ポケモンの役割</div>
+        <div className="space-y-2">
+          {team.map((p, i) => {
+            if (!p) return null;
+            const a = analyses[i];
+            if (!a) return null;
+            return (
+              <div key={i} className="flex gap-3 p-2 bg-indigo-50 rounded border border-indigo-200">
+                <img src={pokeImg(p)} onError={e=>{e.target.src=pokeImgFallback(p)}} className="w-14 h-14 object-contain flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-sm">{p.jp}</span>
+                    <span className="text-[10px] bg-indigo-600 text-white rounded px-1.5 py-0.5 font-bold">{a.primary}</span>
+                    <span className="text-[10px] text-gray-500">S{a.spd}</span>
+                  </div>
+                  <div className="text-[11px] text-gray-700 mt-1">{a.desc}</div>
+                  {a.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {a.tags.map((t, ti) => (
+                        <span key={ti} className="text-[9px] bg-white border border-indigo-200 text-indigo-700 rounded px-1 py-0.5">{t}</span>
+                      ))}
+                    </div>
+                  )}
+                  {a.tips.length > 0 && (
+                    <ul className="mt-1.5 ml-4 text-[11px] text-gray-600 list-disc space-y-0.5">
+                      {a.tips.map((tip, ti) => <li key={ti}>{tip}</li>)}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="text-[10px] text-gray-500 text-center">
+        ※ この解説はステータス・技・持ち物・とくせいから自動推定しています。実際の使い方はポケモン単体ページ(🔍)でも確認推奨
+      </div>
+    </div>
+  );
+}
+
 // ====== 自軍登録 ======
 function TeamSetup({team, setTeam}) {
   const [pickerIdx, setPickerIdx] = useState(null);
@@ -1262,18 +1972,51 @@ function TeamSetup({team, setTeam}) {
       ...poke,
       moves: copy[idx]?.moves || [{name:'',type:''},{name:'',type:''},{name:'',type:''},{name:'',type:''}],
       item: copy[idx]?.item || '',
+      ability: copy[idx]?.ability || '',
     };
     setTeam(copy);
     setPickerIdx(null);
   };
   const setMove = (pIdx, mIdx, field, value) => {
     const copy = [...team];
-    copy[pIdx].moves[mIdx] = { ...copy[pIdx].moves[mIdx], [field]: value };
+    const cur = { ...copy[pIdx].moves[mIdx], [field]: value };
+    // 技名変更時: 辞書と一致したらタイプ・分類・威力・命中・優先度を自動補完
+    if (field === 'name' && value) {
+      const data = lookupMove(value);
+      if (data) {
+        cur.type = data.type;
+        cur.cat = data.cat;
+        // 変化技ならBPは0
+        if (data.cat === '変') {
+          cur.bp = 0;
+        } else {
+          // 特殊技辞書を優先チェック
+          const sp = MOVE_SPECIAL[value];
+          if (sp) {
+            // 特殊挙動技は威力自動計算するので空のまま
+            cur.bp = null;
+          } else if (MOVE_BP[value] != null) {
+            cur.bp = MOVE_BP[value];
+          }
+        }
+        // 命中・優先度の自動補完
+        if (MOVE_ACCURACY[value] != null) cur.accuracy = MOVE_ACCURACY[value];
+        else cur.accuracy = null; // 未登録は100扱い（nullで空欄に）
+        if (MOVE_PRIORITY[value] != null) cur.priority = MOVE_PRIORITY[value];
+        else cur.priority = null;
+      }
+    }
+    copy[pIdx].moves[mIdx] = cur;
     setTeam(copy);
   };
   const setItem = (idx, item) => {
     const copy = [...team];
     copy[idx] = { ...copy[idx], item };
+    setTeam(copy);
+  };
+  const setAbility = (idx, ability) => {
+    const copy = [...team];
+    copy[idx] = { ...copy[idx], ability };
     setTeam(copy);
   };
   const clearSlot = idx => {
@@ -1344,6 +2087,12 @@ function TeamSetup({team, setTeam}) {
                         <BiasBadge bias={classifyByStats(p.id)} compact />
                         <BiasBadge bias={classifyByMoves(p.moves)} />
                         <ItemBadge itemId={p.item} />
+                        {p.ability && ABILITY_MAP[p.ability] && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-indigo-50 text-indigo-800 border-indigo-300"
+                            title={`${p.ability}: ${ABILITY_MAP[p.ability].desc}`}>
+                            ✨{p.ability}
+                          </span>
+                        )}
                       </div>
                       <button onClick={()=>setPickerIdx(i)} className="text-xs text-blue-600 hover:underline mt-1">変更</button>
                     </div>
@@ -1378,9 +2127,51 @@ function TeamSetup({team, setTeam}) {
                       ))}
                     </select>
                   </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-gray-600 whitespace-nowrap">とくせい</span>
+                    <select value={p.ability || ''} onChange={e=>setAbility(i, e.target.value)}
+                      className="flex-1 border rounded px-2 py-1 text-xs bg-white">
+                      <option value="">— 未設定 —</option>
+                      <optgroup label="◆ タイプ無効/吸収">
+                        {ABILITIES.filter(a => a.group === 'immunity' || a.group === 'absorb').map(a => (
+                          <option key={a.id} value={a.id}>✨ {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="◆ 軽減/耐性">
+                        {ABILITIES.filter(a => a.group === 'resist' || a.group === 'defense').map(a => (
+                          <option key={a.id} value={a.id}>🛡 {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="◆ 威力強化">
+                        {ABILITIES.filter(a => a.group === 'boost').map(a => (
+                          <option key={a.id} value={a.id}>🔥 {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="◆ 優先度/素早さ">
+                        {ABILITIES.filter(a => a.group === 'priority').map(a => (
+                          <option key={a.id} value={a.id}>⚡ {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="◆ 天候">
+                        {ABILITIES.filter(a => a.group === 'weather').map(a => (
+                          <option key={a.id} value={a.id}>☀ {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="◆ 威嚇/妨害">
+                        {ABILITIES.filter(a => a.group === 'intimidate').map(a => (
+                          <option key={a.id} value={a.id}>😤 {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="◆ 特殊戦略">
+                        {ABILITIES.filter(a => a.group === 'special').map(a => (
+                          <option key={a.id} value={a.id}>⚙ {a.jp} — {a.desc}</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
                   <div className="text-xs font-bold text-gray-600 pt-1 flex items-center gap-1">
                     <span>わざ</span>
-                    <span className="text-[9px] font-normal text-gray-400">（威力/命中/優先度は任意・既知の技は自動推定）</span>
+                    <span className="text-[9px] font-normal text-gray-400">（技名を入力するとタイプ・威力・命中・優先度が自動入力）</span>
                   </div>
                   {[0,1,2,3].map(m => {
                     const mv = p.moves[m] || {};
@@ -1389,11 +2180,26 @@ function TeamSetup({team, setTeam}) {
                     const autoAcc = MOVE_ACCURACY[mv.name];
                     const autoPri = MOVE_PRIORITY[mv.name];
                     const src = bpSource({...mv, cat: mv.cat || '物'});
+                    const recognized = mv.name && !!MOVE_DATA[mv.name];
                     return (
                       <div key={m} className="flex gap-1.5 flex-wrap items-center">
-                        <input type="text" placeholder={`技${m+1}（名前）`} value={mv.name || ''}
-                          onChange={e=>setMove(i,m,'name',e.target.value)}
-                          className="flex-1 min-w-[120px] border rounded px-2 py-1 text-xs" />
+                        <div className="relative flex-1 min-w-[120px]">
+                          <input type="text" placeholder={`技${m+1}（名前を入力）`} value={mv.name || ''}
+                            list={`moves-datalist-${i}-${m}`}
+                            onChange={e=>setMove(i,m,'name',e.target.value)}
+                            className={`w-full border rounded px-2 py-1 text-xs pr-6 ${recognized ? 'bg-green-50 border-green-300' : (mv.name ? 'bg-yellow-50 border-yellow-300' : '')}`} />
+                          {recognized && (
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-green-600 text-xs font-bold" title="辞書と一致、自動補完済み">✓</span>
+                          )}
+                          {mv.name && !recognized && (
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-amber-600 text-xs font-bold" title="辞書未登録: 手動で設定を">?</span>
+                          )}
+                          <datalist id={`moves-datalist-${i}-${m}`}>
+                            {Object.keys(MOVE_DATA).map(name => (
+                              <option key={name} value={name} />
+                            ))}
+                          </datalist>
+                        </div>
                         <select value={mv.type || ''} onChange={e=>setMove(i,m,'type',e.target.value)}
                           className="border rounded px-1 py-1 text-xs w-24">
                           <option value="">タイプ</option>
@@ -1451,6 +2257,7 @@ function TeamSetup({team, setTeam}) {
       {pickerIdx !== null && (
         <PokemonPicker onSelect={p=>setSlot(pickerIdx, p)} onClose={()=>setPickerIdx(null)} />
       )}
+      <TeamGuide team={team} />
     </div>
   );
 }
@@ -2675,37 +3482,6 @@ function BattleView({opponents, setOpponents, userTeam}) {
           自軍が未登録です。上の「自軍登録」タブから先に登録してください（抜群技の判定に必要）。
         </div>
       )}
-      <AnalysisPanel userTeam={userTeam} opponents={opponents} />
-      {filled > 0 && (biasSummary.phys + biasSummary.spec + biasSummary.mixed > 0) && (
-        <div className="bg-gray-50 border rounded-lg p-2 flex items-center gap-2 flex-wrap text-xs">
-          <span className="font-bold text-gray-700">相手構成バイアス:</span>
-          {biasSummary.phys > 0 && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-red-100 text-red-700 border-red-300 font-bold">
-              🥊物理 ×{biasSummary.phys}
-            </span>
-          )}
-          {biasSummary.spec > 0 && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-blue-100 text-blue-700 border-blue-300 font-bold">
-              ✨特殊 ×{biasSummary.spec}
-            </span>
-          )}
-          {biasSummary.mixed > 0 && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-purple-100 text-purple-700 border-purple-300 font-bold">
-              ⚔️両刀 ×{biasSummary.mixed}
-            </span>
-          )}
-          {(() => {
-            const max = Math.max(biasSummary.phys, biasSummary.spec);
-            if (max >= 2 && biasSummary.phys !== biasSummary.spec) {
-              const hint = biasSummary.phys > biasSummary.spec
-                ? '→ 物理受けを残したい'
-                : '→ 特殊受けを残したい';
-              return <span className="text-gray-500 ml-1">{hint}</span>;
-            }
-            return null;
-          })()}
-        </div>
-      )}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-sm text-gray-600">相手パーティ ({filled}/6体)</div>
         <div className="flex items-center gap-1.5">
@@ -2737,6 +3513,37 @@ function BattleView({opponents, setOpponents, userTeam}) {
             onPick={()=>setPickerIdx(i)} onClear={()=>clearSlot(i)} />
         ))}
       </div>
+      {filled > 0 && (biasSummary.phys + biasSummary.spec + biasSummary.mixed > 0) && (
+        <div className="bg-gray-50 border rounded-lg p-2 flex items-center gap-2 flex-wrap text-xs">
+          <span className="font-bold text-gray-700">相手構成バイアス:</span>
+          {biasSummary.phys > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-red-100 text-red-700 border-red-300 font-bold">
+              🥊物理 ×{biasSummary.phys}
+            </span>
+          )}
+          {biasSummary.spec > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-blue-100 text-blue-700 border-blue-300 font-bold">
+              ✨特殊 ×{biasSummary.spec}
+            </span>
+          )}
+          {biasSummary.mixed > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border bg-purple-100 text-purple-700 border-purple-300 font-bold">
+              ⚔️両刀 ×{biasSummary.mixed}
+            </span>
+          )}
+          {(() => {
+            const max = Math.max(biasSummary.phys, biasSummary.spec);
+            if (max >= 2 && biasSummary.phys !== biasSummary.spec) {
+              const hint = biasSummary.phys > biasSummary.spec
+                ? '→ 物理受けを残したい'
+                : '→ 特殊受けを残したい';
+              return <span className="text-gray-500 ml-1">{hint}</span>;
+            }
+            return null;
+          })()}
+        </div>
+      )}
+      <AnalysisPanel userTeam={userTeam} opponents={opponents} />
       {pickerIdx !== null && (
         <PokemonPicker onSelect={p=>setSlot(pickerIdx, p)} onClose={()=>setPickerIdx(null)} />
       )}
@@ -2943,48 +3750,170 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
       const am = matchupScore(alt, o);
       return {idx:i, poke:alt, ms:am};
     }).filter(Boolean).sort((a,b) => b.ms.total - a.ms.total);
-    // 判定: 戦う / 引く / 交代
+
+    // 速度分析（スカーフ警戒込み）
+    const sp = speedAnalysis(u, o);
+    const priority = ms.off.priority || 0;
+    // 確定数計算
+    const bestMv = ms.off.mv;
+    const offAcc = bestMv
+      ? (bestMv.accuracy && bestMv.accuracy > 0 && bestMv.accuracy <= 100
+         ? bestMv.accuracy : (MOVE_ACCURACY[bestMv.name] ?? 100))
+      : 100;
+    const kt = killTurns(ms.off.dmgPct, offAcc);
+    const ktOpp = killTurns(ms.thr.dmgPct, 90); // 相手命中は90%相当で控えめ見積
+    // レース判定
+    const race = raceVerdict(kt, ktOpp, sp, priority);
+    // スカーフ警戒（相手持ち物未判明 & スカーフで逆転される場合）
+    const oppKnownScarf = o.item === 'choice_scarf';
+    const scarfRisk = sp.isFaster && sp.scarfBeats && !oppKnownScarf;
+
+    // 判定: 戦う / 引く / 交代 （raceResultを優先的に反映）
     let verdict, verdictColor, verdictReasons = [];
     const safer = alternatives.find(a => a.ms.total > ms.total + 1.2);
-    if (ms.total >= 3) {
-      verdict = '⚔ 戦う（有利対面）';
+    if (race.verdict === 'win' && ms.total >= 0) {
+      verdict = '⚔ 戦う（勝ち筋あり）';
       verdictColor = 'bg-green-600';
-      verdictReasons.push(`マッチアップ+${ms.total.toFixed(1)} / 攻撃${ms.offense.toFixed(1)} 被弾予測${ms.thr.dmgPct}%`);
-    } else if (ms.total >= 0.5 && ms.thr.dmgPct < 80) {
-      verdict = '⚔ 戦える（やや有利～互角）';
+      verdictReasons.push(`${race.label} / ${race.reason}`);
+    } else if (race.verdict === 'winProb') {
+      verdict = '⚔ 戦える（要注意）';
       verdictColor = 'bg-emerald-500';
-      verdictReasons.push(`マッチアップ+${ms.total.toFixed(1)} / 攻撃${ms.offense.toFixed(1)}`);
-    } else if (safer && ms.total < 1) {
+      verdictReasons.push(`${race.label} / ${race.reason}`);
+    } else if (safer && race.verdict === 'lose') {
       verdict = `🔄 交代推奨（${safer.poke.jp}が有利）`;
       verdictColor = 'bg-sky-500';
       verdictReasons.push(`${safer.poke.jp}の相性+${safer.ms.total.toFixed(1)} vs 現在+${ms.total.toFixed(1)}`);
-    } else if (ms.thr.dmgPct >= 100 && ms.off.priority <= 0) {
-      verdict = '🚫 引く（被弾過大）';
+      verdictReasons.push(`現状: ${race.label}`);
+    } else if (race.verdict === 'lose' && ms.thr.dmgPct >= 100) {
+      verdict = '🚫 引く（先に倒される）';
       verdictColor = 'bg-red-600';
-      verdictReasons.push(`被弾予測${ms.thr.dmgPct}%で確定1発圏`);
-    } else if (ms.total < -1) {
-      verdict = '🚫 不利対面';
+      verdictReasons.push(`${race.label} / 被弾${ms.thr.dmgPct}%`);
+    } else if (race.verdict === 'lose') {
+      verdict = '🚫 不利（火力/速度負け）';
       verdictColor = 'bg-orange-500';
-      verdictReasons.push(`マッチアップ${ms.total.toFixed(1)}`);
-    } else {
-      verdict = '⚖ 互角';
+      verdictReasons.push(race.label);
+    } else if (race.verdict === 'draw') {
+      verdict = '⚖ 拮抗（相打ち圏）';
       verdictColor = 'bg-gray-500';
-      verdictReasons.push(`マッチアップ${ms.total.toFixed(1)} / 攻撃${ms.offense.toFixed(1)}`);
+      verdictReasons.push(race.label);
+    } else {
+      verdict = '⚔ 戦える';
+      verdictColor = 'bg-emerald-500';
+      verdictReasons.push(`マッチアップ+${ms.total.toFixed(1)}`);
     }
-    // 速度情報
-    const us = effectiveSpeed(u);
-    const os = effectiveSpeed(o);
-    const speedInfo = us > os ? {text:`先手 (${us} vs ${os})`, cls:'text-green-700'}
-      : us === os ? {text:`同速 (${us})`, cls:'text-gray-600'}
-      : {text:`後手 (${us} vs ${os})`, cls:'text-red-600'};
-    if (ms.off.priority > 0) {
-      speedInfo.text += ` / 先制技+${ms.off.priority}`;
+    if (scarfRisk) {
+      verdictReasons.push(`⚠ スカーフ警戒: 相手${o.jp}がスカーフならS${sp.osScarf}で逆転`);
+    }
+
+    // 速度情報（詳細）
+    const speedInfo = sp.isFaster ? {text:`先手 (${sp.us} vs ${sp.os})`, cls:'text-green-700'}
+      : sp.isSame ? {text:`同速 (${sp.us}) - 乱数50%`, cls:'text-yellow-700'}
+      : {text:`後手 (${sp.us} vs ${sp.os})`, cls:'text-red-600'};
+    if (priority > 0) {
+      speedInfo.text += ` / 先制技+${priority}`;
       speedInfo.cls = 'text-sky-700';
     }
-    // 最適技
-    const bestMv = ms.off.mv;
-    return {u, o, ms, verdict, verdictColor, verdictReasons, speedInfo, bestMv, alternatives};
-  }, [activeUser, activeOpp, picks, koUser, userTeam, opponents, pickedUsers]);
+
+    // 交代読み: 相手側の未出しポケで、現自軍に有利なもの
+    const oppSwitchCandidates = opponents.map((oo, oi) => {
+      if (!oo || koOpp[oi] || oi === activeOpp) return null;
+      const altMs = matchupScore(u, oo);
+      return {opp:oo, oppIdx:oi, ms:altMs};
+    }).filter(Boolean)
+      .filter(c => c.ms.total < ms.total - 1.5 && c.ms.total < 0) // こちらの相性が現状より大幅に悪くなる候補のみ
+      .sort((a,b) => a.ms.total - b.ms.total)
+      .slice(0, 2);
+
+    // とくせい戦略アドバイス
+    const abilityAdvice = [];
+    const myAb = u.ability ? ABILITY_MAP[u.ability] : null;
+    if (myAb) {
+      // タイプ無効
+      if ((myAb.group === 'immunity' || myAb.group === 'absorb') && myAb.immuneTypes) {
+        const oppHasImmuneType = o.types.some(t => myAb.immuneTypes.includes(t));
+        if (oppHasImmuneType) {
+          abilityAdvice.push({
+            text: `🛡 ${myAb.jp}で${myAb.immuneTypes.map(t=>TYPE_JP[t]||t).join('/')}技を無効化 → 一致技が通らない`,
+            cls: 'text-green-700 font-bold'
+          });
+        } else {
+          abilityAdvice.push({
+            text: `💡 ${myAb.jp}は${myAb.immuneTypes.map(t=>TYPE_JP[t]||t).join('/')}技無効。読みで交代受け可`,
+            cls: 'text-gray-600'
+          });
+        }
+      }
+      // タイプ半減
+      if (myAb.group === 'resist' && myAb.resistTypes) {
+        const hasResistType = o.types.some(t => myAb.resistTypes.includes(t));
+        if (hasResistType) {
+          abilityAdvice.push({
+            text: `🛡 ${myAb.jp}で${myAb.resistTypes.map(t=>TYPE_JP[t]||t).join('/')}技半減 → 被ダメ大幅減`,
+            cls: 'text-green-700 font-bold'
+          });
+        }
+      }
+      // 防御系
+      if (myAb.group === 'defense') {
+        if (myAb.id === 'マルチスケイル') abilityAdvice.push({text:'🛡 マルチスケイル: HP満タン維持なら被ダメ半減', cls:'text-green-700'});
+        if (myAb.id === 'ファーコート' && ms.thr.cat === '物') abilityAdvice.push({text:'🛡 ファーコート発動: 物理技半減', cls:'text-green-700 font-bold'});
+        if ((myAb.id === 'フィルター' || myAb.id === 'ハードロック') && ms.thr.mult >= 2) abilityAdvice.push({text:`🛡 ${myAb.jp}: 抜群被ダメ×0.75`, cls:'text-green-700'});
+        if (myAb.id === 'マジックガード') abilityAdvice.push({text:'🛡 マジックガード: 天候/毒/やどりぎ等のダメ無効', cls:'text-green-700'});
+      }
+      // 威力強化
+      if (myAb.group === 'boost') {
+        if (myAb.id === 'テクニシャン' && ms.off.mv) {
+          const bp = (ms.off.mv.bp != null) ? ms.off.mv.bp : (MOVE_BP[ms.off.mv.name] ?? 0);
+          if (bp > 0 && bp <= 60) abilityAdvice.push({text:`🔥 テクニシャン発動: ${ms.off.mv.name}(威${bp})×1.5`, cls:'text-red-700 font-bold'});
+        }
+        if (myAb.id === 'てきおうりょく' && ms.off.stab) {
+          abilityAdvice.push({text:'🔥 てきおうりょく: 一致技が大幅強化（×1.33相当）', cls:'text-red-700 font-bold'});
+        }
+        if (myAb.id === 'ちからずく' && ms.off.mv) {
+          abilityAdvice.push({text:`🔥 ちからずく: ${ms.off.mv.name}×1.3（追加効果は消失）`, cls:'text-red-700'});
+        }
+        if (myAb.id === 'ヨガパワー' && ms.off.mv?.cat === '物') {
+          abilityAdvice.push({text:'🔥 ヨガパワー: 物理×2.0', cls:'text-red-700 font-bold'});
+        }
+        if (myAb.id === 'ちからもち' && ms.off.mv?.cat === '物') {
+          abilityAdvice.push({text:'🔥 ちからもち: 物理×2.0', cls:'text-red-700 font-bold'});
+        }
+      }
+      // 優先度
+      if (myAb.group === 'priority') {
+        if (myAb.id === 'イタズラゴコロ') abilityAdvice.push({text:'⚡ イタズラゴコロ: 変化技+1優先度（先制で補助技）', cls:'text-sky-700'});
+        if (myAb.id === 'はやてのつばさ' && u.moves?.some(mv => mv.type === 'flying')) {
+          abilityAdvice.push({text:'⚡ はやてのつばさ: HP満タンでひこう技先制', cls:'text-sky-700 font-bold'});
+        }
+      }
+      // 天候
+      if (myAb.group === 'weather') {
+        const weatherName = {sun:'晴れ', rain:'雨', sand:'砂嵐', hail:'雪'}[myAb.weather];
+        abilityAdvice.push({text:`☀ ${myAb.jp}: 場に出るだけで${weatherName}。天候パ展開可`, cls:'text-amber-700'});
+      }
+      // 威嚇
+      if (myAb.id === 'いかく' && ms.thr.cat === '物') {
+        abilityAdvice.push({text:'😤 いかく発動: 相手の物理火力を-1段階ダウン', cls:'text-green-700 font-bold'});
+      }
+      // 相手とくせい無視
+      if (myAb.id === 'かたやぶり' || myAb.id === 'ターボブレイズ' || myAb.id === 'テラボルテージ') {
+        if (o.ability) {
+          abilityAdvice.push({text:`⚙ ${myAb.jp}: 相手の${o.ability}を無視できる`, cls:'text-purple-700 font-bold'});
+        }
+      }
+      // いろめがね
+      if (myAb.id === 'いろめがね' && ms.off.mult < 1 && ms.off.mult > 0) {
+        abilityAdvice.push({text:'⚙ いろめがね: いまひとつ技を等倍化', cls:'text-purple-700'});
+      }
+    }
+    // 有効打が全てとくせいで無効化されている場合
+    if (ms.off.abilityBlocked) {
+      abilityAdvice.push({text:`🚫 相手の${o.ability}で主力技が無効化されている可能性`, cls:'text-red-700 font-bold'});
+    }
+
+    return {u, o, ms, verdict, verdictColor, verdictReasons, speedInfo, bestMv, offAcc,
+            alternatives, sp, kt, ktOpp, race, scarfRisk, priority, oppSwitchCandidates, abilityAdvice};
+  }, [activeUser, activeOpp, picks, koUser, koOpp, userTeam, opponents, pickedUsers]);
 
   // 残存状況サマリ
   const aliveUsers = picks.filter((p,i)=> p != null && !koUser[i]).length;
@@ -3018,6 +3947,53 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
       return {idx:i, poke:u, ms: matchupScore(u, o)};
     }).filter(Boolean).sort((a,b) => b.ms.total - a.ms.total);
   }, [activeOpp, picks, koUser, userTeam, opponents, activeUser]);
+
+  // 終盤詰め将棋: 残存ポケモン同士の最適割当
+  // 各生存自軍をどの相手に当てるか、全順列から最適を探索
+  const endgamePlan = useMemo(() => {
+    const aliveU = picks.map((pi, i) => ({picksIdx:i, u: pi != null ? userTeam[pi] : null}))
+      .filter(x => x.u && !koUser[x.picksIdx]);
+    const aliveO = opponents.map((o, oi) => ({oppIdx:oi, o}))
+      .filter(x => x.o && !koOpp[x.oppIdx]);
+    if (aliveU.length === 0 || aliveO.length === 0) return null;
+    // 全組み合わせ探索は指数的だが、最大3×3なので問題なし
+    if (aliveU.length > 4 || aliveO.length > 4) return null;
+    // スコア行列
+    const sm = aliveU.map(x => aliveO.map(y => matchupScore(x.u, y.o)));
+    // 各敵に対する最適担当者を決定（敵基準のアサイン）
+    const perOpp = aliveO.map((_, oi) => {
+      let bestUi = 0, bestT = -Infinity;
+      for (let ui = 0; ui < aliveU.length; ui++) {
+        if (sm[ui][oi].total > bestT) { bestT = sm[ui][oi].total; bestUi = ui; }
+      }
+      return {oppIdx: aliveO[oi].oppIdx, opp: aliveO[oi].o, ui: bestUi, u: aliveU[bestUi].u, picksIdx: aliveU[bestUi].picksIdx, ms: sm[bestUi][oi]};
+    });
+    // 各自軍が一度ずつ使えれば理想だが、数が足りないならダブル割当
+    const userUsage = {};
+    perOpp.forEach(p => { userUsage[p.ui] = (userUsage[p.ui] || 0) + 1; });
+    // 詰み判定
+    const noPositive = perOpp.filter(p => p.ms.total < 0).length;
+    const strongWin = perOpp.filter(p => p.ms.total >= 2).length;
+    const overworked = Object.entries(userUsage).filter(([_, c]) => c >= 2).length;
+    let verdict, verdictCls;
+    if (aliveU.length >= aliveO.length && noPositive === 0 && overworked === 0) {
+      verdict = `✅ 勝ち筋あり（${aliveO.length}体すべて担当者が有利）`;
+      verdictCls = 'text-green-700 bg-green-50 border-green-300';
+    } else if (aliveU.length < aliveO.length && noPositive === 0) {
+      verdict = `⚠ 数的不利だが相性は良好（${aliveU.length}体vs${aliveO.length}体）`;
+      verdictCls = 'text-amber-700 bg-amber-50 border-amber-300';
+    } else if (strongWin >= aliveO.length - 1) {
+      verdict = `✅ ほぼ勝ち筋あり（${strongWin}/${aliveO.length}体を圧倒可）`;
+      verdictCls = 'text-emerald-700 bg-emerald-50 border-emerald-300';
+    } else if (noPositive >= aliveO.length / 2) {
+      verdict = `🚨 詰み危機（${noPositive}体を処理できない）`;
+      verdictCls = 'text-red-700 bg-red-50 border-red-300';
+    } else {
+      verdict = `⚖ 拮抗（${noPositive}体不利 / ${strongWin}体優勢）`;
+      verdictCls = 'text-gray-700 bg-gray-50 border-gray-300';
+    }
+    return {perOpp, verdict, verdictCls, aliveU, aliveO, noPositive, strongWin};
+  }, [picks, koUser, koOpp, userTeam, opponents]);
 
   // 選出候補: 自軍から未選出のもの
   const availableUserIdxs = userTeam.map((u,i)=>u?i:null).filter(i => i != null && !picks.includes(i));
@@ -3191,6 +4167,12 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
                 className="w-16 h-16 object-contain mx-auto" />
               <div className="text-xs font-bold">{faceOff.u.jp}</div>
               <div className="text-[10px] text-gray-500">S{effectiveSpeed(faceOff.u)}</div>
+              {faceOff.u.ability && ABILITY_MAP[faceOff.u.ability] && (
+                <div className="text-[9px] mt-0.5 bg-indigo-100 text-indigo-800 rounded px-1 py-0.5 font-bold border border-indigo-300"
+                  title={ABILITY_MAP[faceOff.u.ability].desc}>
+                  ✨{faceOff.u.ability}
+                </div>
+              )}
             </div>
             <div className="text-2xl font-bold text-gray-400">VS</div>
             <div className="text-center flex-1">
@@ -3203,14 +4185,85 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
           <div className={`text-center py-1.5 rounded font-bold text-white text-sm ${faceOff.verdictColor}`}>
             {faceOff.verdict}
           </div>
+
+          {/* とくせい戦略アドバイス */}
+          {faceOff.abilityAdvice && faceOff.abilityAdvice.length > 0 && (
+            <div className="bg-indigo-50 border border-indigo-300 rounded p-2">
+              <div className="text-[10px] font-bold text-indigo-900 mb-1">✨ とくせい戦略</div>
+              <div className="space-y-0.5">
+                {faceOff.abilityAdvice.map((a, i) => (
+                  <div key={i} className={`text-[11px] ${a.cls}`}>{a.text}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 速度レース & 確定数 */}
+          <div className="bg-white rounded border border-blue-200 p-2 space-y-1">
+            <div className="text-[10px] font-bold text-blue-900">🏁 速度レース & 確定数</div>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <div className={`font-bold ${faceOff.speedInfo.cls}`}>
+                  🏃 {faceOff.speedInfo.text}
+                </div>
+                {faceOff.scarfRisk && (
+                  <div className="text-[10px] text-amber-700 mt-0.5">
+                    ⚠ スカーフなら S{faceOff.sp.osScarf} で逆転
+                  </div>
+                )}
+                {faceOff.sp.scarfSafe && (
+                  <div className="text-[10px] text-green-600 mt-0.5">
+                    ✓ スカーフでも先手（S{faceOff.sp.osScarf}）
+                  </div>
+                )}
+                {faceOff.sp.isSame && (
+                  <div className="text-[10px] text-yellow-700 mt-0.5">
+                    ⚡ 同速乱数。先制技での差別化推奨
+                  </div>
+                )}
+              </div>
+              <div className={`font-bold ${faceOff.race.color}`}>
+                🎯 {faceOff.race.label}
+                <div className="text-[10px] font-normal text-gray-600 mt-0.5">
+                  {faceOff.race.reason}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 text-[11px] pt-1 border-t border-gray-100">
+              <div className="flex-1">
+                <span className="text-gray-500">こちら→相手:</span>
+                {faceOff.kt ? (
+                  <span className="ml-1 font-bold text-blue-700">
+                    {faceOff.kt.turns}発{faceOff.kt.accTurns > faceOff.kt.turns ? `(命中考慮${faceOff.kt.accTurns}発)` : ''}
+                    <span className="text-gray-500 font-normal ml-1">({faceOff.ms.off.dmgPct}%)</span>
+                  </span>
+                ) : (
+                  <span className="ml-1 text-red-600 font-bold">打点なし</span>
+                )}
+              </div>
+              <div className="flex-1">
+                <span className="text-gray-500">相手→こちら:</span>
+                {faceOff.ktOpp ? (
+                  <span className="ml-1 font-bold text-orange-700">
+                    {faceOff.ktOpp.turns}発耐
+                    <span className="text-gray-500 font-normal ml-1">({faceOff.ms.thr.dmgPct}%)</span>
+                  </span>
+                ) : (
+                  <span className="ml-1 text-gray-500">不明</span>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="text-[11px] space-y-0.5">
-            <div className={faceOff.speedInfo.cls}>🏃 {faceOff.speedInfo.text}</div>
             {faceOff.bestMv && (
               <div className="text-gray-700">
                 🎯 推奨技: <b>{faceOff.bestMv.name}</b>
                 {faceOff.ms.off.dmgPct > 0 && <span className="ml-1 text-blue-700">約{faceOff.ms.off.dmgPct}%ダメ</span>}
+                {faceOff.offAcc < 100 && <span className="ml-1 text-amber-600">命中{faceOff.offAcc}</span>}
                 {faceOff.ms.off.stab && <span className="ml-1 text-red-600">⚡STAB</span>}
                 {faceOff.ms.off.mult >= 2 && <span className="ml-1 text-green-700">✨抜群×{faceOff.ms.off.mult}</span>}
+                {faceOff.priority > 0 && <span className="ml-1 text-sky-700">+{faceOff.priority}先制</span>}
               </div>
             )}
             <div className="text-orange-700">🛡 被弾予測: 最大 約{faceOff.ms.thr.dmgPct}%（{faceOff.ms.thr.cat === '物' ? '物理' : '特殊'}/{faceOff.ms.thr.type}）</div>
@@ -3218,6 +4271,27 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
               <div key={i} className="text-gray-600">💡 {r}</div>
             ))}
           </div>
+
+          {/* 交代読み警告 */}
+          {faceOff.oppSwitchCandidates.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded p-2">
+              <div className="text-[10px] font-bold text-amber-800 mb-1">👁 交代読み警告（相手が引きそう）</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {faceOff.oppSwitchCandidates.map(c => (
+                  <div key={c.oppIdx}
+                    className="flex items-center gap-1 border border-amber-300 bg-white rounded px-1.5 py-0.5 text-[10px]">
+                    <img src={pokeImg(c.opp)} onError={e=>{e.target.src=pokeImgFallback(c.opp)}} className="w-5 h-5 object-contain" />
+                    <span>{c.opp.jp}</span>
+                    <span className="font-bold text-red-600">{c.ms.total.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-amber-700 mt-1">
+                相手は現対面を嫌って上記に引く可能性。こちらも先に交代を検討
+              </div>
+            </div>
+          )}
+
           {/* 交代候補 */}
           {bestSwitches.length > 0 && (
             <div className="border-t border-blue-200 pt-1.5">
@@ -3242,6 +4316,54 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
       ) : (
         <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-3 text-xs text-gray-500 text-center">
           {pickedCount < 1 ? 'STEP1で選出を決めてください' : '自軍と相手の「出」ボタンを押すと対面推奨が表示されます'}
+        </div>
+      )}
+
+      {/* 終盤詰め将棋 */}
+      {endgamePlan && endgamePlan.aliveO.length > 0 && endgamePlan.aliveU.length > 0 && (
+        <div className="bg-white border rounded-lg p-2.5">
+          <div className="text-xs font-bold text-gray-700 mb-1.5">
+            ♟ 終盤詰め将棋（残 {endgamePlan.aliveU.length}vs{endgamePlan.aliveO.length}）
+          </div>
+          <div className={`rounded border p-2 mb-2 text-xs font-bold ${endgamePlan.verdictCls}`}>
+            {endgamePlan.verdict}
+          </div>
+          <div className="text-[10px] text-gray-600 mb-1">各相手に対する最適担当者（数字=相性スコア）:</div>
+          <div className="space-y-1">
+            {endgamePlan.perOpp.map(p => {
+              const t = p.ms.total;
+              const cls = t >= 3 ? 'bg-green-100 border-green-400 text-green-900'
+                : t >= 1 ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                : t >= 0 ? 'bg-gray-50 border-gray-300 text-gray-700'
+                : 'bg-red-50 border-red-300 text-red-700';
+              return (
+                <div key={p.oppIdx} className={`flex items-center gap-2 border rounded px-2 py-1 ${cls}`}>
+                  <div className="flex items-center gap-1 min-w-[80px]">
+                    <img src={pokeImg(p.opp)} onError={e=>{e.target.src=pokeImgFallback(p.opp)}} className="w-6 h-6 object-contain" />
+                    <span className="text-[11px] font-bold truncate max-w-[70px]">{p.opp.jp}</span>
+                  </div>
+                  <span className="text-gray-400">→</span>
+                  <div className="flex items-center gap-1 flex-1 min-w-0">
+                    <img src={pokeImg(p.u)} onError={e=>{e.target.src=pokeImgFallback(p.u)}} className="w-6 h-6 object-contain" />
+                    <span className="text-[11px] font-bold truncate">{p.u.jp}</span>
+                    {isMega(p.u) && <span title="メガ">💎</span>}
+                  </div>
+                  <span className="text-[11px] font-bold whitespace-nowrap">
+                    {t >= 0 ? '+' : ''}{t.toFixed(1)}
+                  </span>
+                  <button onClick={()=>{
+                    setActiveUser(p.picksIdx);
+                    setActiveOpp(p.oppIdx);
+                  }} className="text-[9px] px-1.5 py-0.5 rounded bg-white border hover:bg-blue-50 whitespace-nowrap">
+                    対面
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[10px] text-gray-500 mt-1.5 leading-snug">
+            ※ 「対面」を押すと STEP3 にその組合せの詳細（確定数・速度レース）が出ます
+          </div>
         </div>
       )}
 
@@ -3540,7 +4662,7 @@ function App() {
       <div className="max-w-6xl mx-auto p-3 sm:p-4">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助</h1>
+            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v2.7 使い方ガイド</span></h1>
             <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
           </div>
           <div className="flex flex-col items-end gap-1">
