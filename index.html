@@ -412,6 +412,13 @@ const ITEMS = [
 ];
 const ITEM_MAP = Object.fromEntries(ITEMS.map(it => [it.id, it]));
 
+// メガストーン判定ヘルパー
+function isMega(poke) {
+  if (!poke || !poke.item) return false;
+  const it = ITEM_MAP[poke.item];
+  return !!(it && it.group === 'mega');
+}
+
 // 持ち物のセレクタ用グループ定義
 const ITEM_GROUPS = [
   { key:'mega',         label:'◆ メガストーン' },
@@ -1146,7 +1153,7 @@ const IconShield = (p) => <Icon {...p} d={<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c
 
 // ====== UIパーツ ======
 function TypeBadge({type, size='sm'}) {
-  const sz = size === 'sm' ? 'w-12 h-auto' : 'w-16 h-auto';
+  const sz = size === 'xs' ? 'w-8 h-auto' : size === 'sm' ? 'w-12 h-auto' : 'w-16 h-auto';
   return <img src={typeIconUrl(type)} alt={TYPE_JP[type]} title={TYPE_JP[type]} className={`${sz} inline-block align-middle`} />;
 }
 function MultBadge({mult}) {
@@ -1662,6 +1669,9 @@ function AnalysisPanel({userTeam, opponents}) {
     };
     let best = null;
     for (const combo of combos) {
+      // メガ2体以上は除外（1バトル1回のメガ進化なので実質不可）
+      const megaCount = combo.filter(isMega).length;
+      if (megaCount >= 2) continue;
       // 各敵に対する最良担当者を決定
       const perOpp = opps.map(o => {
         let bestIdx = 0, bestTotal = -Infinity, bestMS = null;
@@ -1694,7 +1704,7 @@ function AnalysisPanel({userTeam, opponents}) {
       const positiveBonus = positiveCount * 0.25;
       const total = baseScore + distributionBonus + diversityBonus + speedBonus - dupPenalty + positiveBonus;
       if (!best || total > best.total) {
-        best = {combo, total, covered, baseScore, perOpp, distributionBonus, diversityBonus, speedBonus, dupPenalty, positiveBonus, typeCount: typeSet.size, tierCount: spdTiers.size};
+        best = {combo, total, covered, baseScore, perOpp, distributionBonus, diversityBonus, speedBonus, dupPenalty, positiveBonus, typeCount: typeSet.size, tierCount: spdTiers.size, megaCount};
       }
     }
     return best;
@@ -1939,18 +1949,27 @@ function AnalysisPanel({userTeam, opponents}) {
           {/* 推奨選出3体 */}
           {users.length >= 3 && trio && (
             <div>
-              <div className="text-xs font-bold text-gray-600 mb-1.5">
-                ⭐ 推奨選出3体（抜群{trio.covered}/{opps.length}・総合{trio.total.toFixed(1)}）
+              <div className="text-xs font-bold text-gray-600 mb-1.5 flex items-center gap-1.5 flex-wrap">
+                <span>⭐ 推奨選出3体（抜群{trio.covered}/{opps.length}・総合{trio.total.toFixed(1)}）</span>
+                {trio.megaCount === 1 && (
+                  <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-300">
+                    💎 メガ1体
+                  </span>
+                )}
               </div>
               <div className="flex gap-2 flex-wrap">
                 {trio.combo.map((u,i) => {
                   // 担当している敵を抽出
                   const assigned = trio.perOpp.filter(p => p.bestIdx === i);
+                  const mega = isMega(u);
                   return (
-                    <div key={i} className="border rounded p-1.5 bg-blue-50 flex items-center gap-1.5">
+                    <div key={i} className={"border rounded p-1.5 flex items-center gap-1.5 " + (mega ? "bg-purple-50 border-purple-300" : "bg-blue-50")}>
                       <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-10 h-10 object-contain" />
                       <div className="min-w-0">
-                        <div className="text-xs font-bold truncate max-w-[100px]">{u.jp}</div>
+                        <div className="text-xs font-bold truncate max-w-[100px] flex items-center gap-0.5">
+                          {mega && <span title="メガ進化枠">💎</span>}
+                          <span>{u.jp}</span>
+                        </div>
                         <div className="flex items-center gap-1 mt-0.5">
                           <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)}</span>
                           <ItemBadge itemId={u.item} compact />
@@ -1972,6 +1991,7 @@ function AnalysisPanel({userTeam, opponents}) {
                   タイプ{trio.typeCount}種 / 速度帯{trio.tierCount}段 / 担当分散 +{trio.distributionBonus.toFixed(2)}
                   {trio.dupPenalty > 0 && <span className="text-red-500"> / 重複 -{trio.dupPenalty.toFixed(1)}</span>}
                 </span>
+                <span className="ml-1 text-purple-600">（メガは1バトル1体のみのため2体以上選出は除外済み）</span>
               </div>
             </div>
           )}
@@ -2803,6 +2823,523 @@ function TeamSlotBar({teams, activeIdx, setActiveIdx, setTeams}) {
   );
 }
 
+// ====== 対戦ガイド（バトル中のリアルタイム判断支援） ======
+// フロー:
+//   1) 自軍から3匹を選出（メガ2体は除外）
+//   2) 相手のポケモンを判明次第その場で登録
+//   3) 現在の対面（自軍・相手の選択中ペア）に対して「戦う / 引く / 後続に任せる」を提案
+//   4) 倒れたポケモンをKOマークで管理
+function LiveBattleView({userTeam, opponents, setOpponents}) {
+  const users = useMemo(() => userTeam.filter(Boolean), [userTeam]);
+  // ガイド用の独立state（戦略タブには影響させない）
+  const [picks, setPicks] = useState([null, null, null]); // 選出3匹 (userTeamのindexを保持)
+  const [koUser, setKoUser] = useState([false, false, false]); // 選出3匹のKO状態
+  const [koOpp, setKoOpp] = useState([false, false, false, false, false, false]);
+  const [activeUser, setActiveUser] = useState(null); // picks内のindex
+  const [activeOpp, setActiveOpp] = useState(null); // opponents内のindex
+  const [userPickerOpen, setUserPickerOpen] = useState(null); // picks内のindex
+  const [oppPickerOpen, setOppPickerOpen] = useState(null); // opponents内のindex
+
+  // localStorage: 現在のバトル状態を復元
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('live_battle_v1');
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (Array.isArray(d.picks)) setPicks(d.picks);
+        if (Array.isArray(d.koUser)) setKoUser(d.koUser);
+        if (Array.isArray(d.koOpp)) setKoOpp(d.koOpp);
+        if (typeof d.activeUser === 'number') setActiveUser(d.activeUser);
+        if (typeof d.activeOpp === 'number') setActiveOpp(d.activeOpp);
+      }
+    } catch(e) {}
+  }, []);
+
+  // 相手ポケモンが削除されたらKOフラグもクリア（他タブで削除された場合の同期）
+  useEffect(() => {
+    setKoOpp(prev => prev.map((k, i) => (opponents[i] ? k : false)));
+    if (activeOpp != null && !opponents[activeOpp]) setActiveOpp(null);
+  }, [opponents]);
+
+  // 自軍が変わった場合、選出indexが無効なら外す
+  useEffect(() => {
+    setPicks(prev => prev.map(pi => (pi != null && userTeam[pi]) ? pi : null));
+  }, [userTeam]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('live_battle_v1', JSON.stringify({picks, koUser, koOpp, activeUser, activeOpp}));
+    } catch(e) {}
+  }, [picks, koUser, koOpp, activeUser, activeOpp]);
+
+  const pickedUsers = picks.map(idx => idx != null ? userTeam[idx] : null);
+  const pickedCount = pickedUsers.filter(Boolean).length;
+  const megaPicked = pickedUsers.filter(u => u && isMega(u)).length;
+
+  const toggleUserPick = (picksSlot, userIdx) => {
+    // すでに他スロットで同じポケモン選出済みなら無効
+    if (picks.some((p,i) => p === userIdx && i !== picksSlot)) return;
+    const copy = [...picks];
+    copy[picksSlot] = userIdx;
+    setPicks(copy);
+    setUserPickerOpen(null);
+  };
+  const clearUserPick = (picksSlot) => {
+    const copy = [...picks];
+    copy[picksSlot] = null;
+    setPicks(copy);
+    const koCopy = [...koUser];
+    koCopy[picksSlot] = false;
+    setKoUser(koCopy);
+    if (activeUser === picksSlot) setActiveUser(null);
+  };
+  const resetBattle = () => {
+    if (!confirm('バトル状態をリセットしますか？（選出・KO状態をクリア）')) return;
+    setPicks([null, null, null]);
+    setKoUser([false, false, false]);
+    setKoOpp([false, false, false, false, false, false]);
+    setActiveUser(null);
+    setActiveOpp(null);
+  };
+  const toggleKoUser = (i) => {
+    const copy = [...koUser];
+    copy[i] = !copy[i];
+    setKoUser(copy);
+    if (copy[i] && activeUser === i) setActiveUser(null);
+  };
+  const toggleKoOpp = (i) => {
+    const copy = [...koOpp];
+    copy[i] = !copy[i];
+    setKoOpp(copy);
+    if (copy[i] && activeOpp === i) setActiveOpp(null);
+  };
+  const setOppSlot = (idx, poke) => {
+    const copy = [...opponents];
+    copy[idx] = poke;
+    setOpponents(copy);
+    setOppPickerOpen(null);
+  };
+  const clearOppSlot = (idx) => {
+    const copy = [...opponents];
+    copy[idx] = null;
+    setOpponents(copy);
+    const koCopy = [...koOpp];
+    koCopy[idx] = false;
+    setKoOpp(koCopy);
+    if (activeOpp === idx) setActiveOpp(null);
+  };
+
+  // 現在の対面推奨
+  const faceOff = useMemo(() => {
+    if (activeUser == null || activeOpp == null) return null;
+    const u = pickedUsers[activeUser];
+    const o = opponents[activeOpp];
+    if (!u || !o) return null;
+    const ms = matchupScore(u, o);
+    // 他の残存自軍から、この敵に対するベスト候補を算出
+    const alternatives = picks.map((pickIdx, i) => {
+      if (i === activeUser || pickIdx == null || koUser[i]) return null;
+      const alt = userTeam[pickIdx];
+      if (!alt) return null;
+      const am = matchupScore(alt, o);
+      return {idx:i, poke:alt, ms:am};
+    }).filter(Boolean).sort((a,b) => b.ms.total - a.ms.total);
+    // 判定: 戦う / 引く / 交代
+    let verdict, verdictColor, verdictReasons = [];
+    const safer = alternatives.find(a => a.ms.total > ms.total + 1.2);
+    if (ms.total >= 3) {
+      verdict = '⚔ 戦う（有利対面）';
+      verdictColor = 'bg-green-600';
+      verdictReasons.push(`マッチアップ+${ms.total.toFixed(1)} / 攻撃${ms.offense.toFixed(1)} 被弾予測${ms.thr.dmgPct}%`);
+    } else if (ms.total >= 0.5 && ms.thr.dmgPct < 80) {
+      verdict = '⚔ 戦える（やや有利～互角）';
+      verdictColor = 'bg-emerald-500';
+      verdictReasons.push(`マッチアップ+${ms.total.toFixed(1)} / 攻撃${ms.offense.toFixed(1)}`);
+    } else if (safer && ms.total < 1) {
+      verdict = `🔄 交代推奨（${safer.poke.jp}が有利）`;
+      verdictColor = 'bg-sky-500';
+      verdictReasons.push(`${safer.poke.jp}の相性+${safer.ms.total.toFixed(1)} vs 現在+${ms.total.toFixed(1)}`);
+    } else if (ms.thr.dmgPct >= 100 && ms.off.priority <= 0) {
+      verdict = '🚫 引く（被弾過大）';
+      verdictColor = 'bg-red-600';
+      verdictReasons.push(`被弾予測${ms.thr.dmgPct}%で確定1発圏`);
+    } else if (ms.total < -1) {
+      verdict = '🚫 不利対面';
+      verdictColor = 'bg-orange-500';
+      verdictReasons.push(`マッチアップ${ms.total.toFixed(1)}`);
+    } else {
+      verdict = '⚖ 互角';
+      verdictColor = 'bg-gray-500';
+      verdictReasons.push(`マッチアップ${ms.total.toFixed(1)} / 攻撃${ms.offense.toFixed(1)}`);
+    }
+    // 速度情報
+    const us = effectiveSpeed(u);
+    const os = effectiveSpeed(o);
+    const speedInfo = us > os ? {text:`先手 (${us} vs ${os})`, cls:'text-green-700'}
+      : us === os ? {text:`同速 (${us})`, cls:'text-gray-600'}
+      : {text:`後手 (${us} vs ${os})`, cls:'text-red-600'};
+    if (ms.off.priority > 0) {
+      speedInfo.text += ` / 先制技+${ms.off.priority}`;
+      speedInfo.cls = 'text-sky-700';
+    }
+    // 最適技
+    const bestMv = ms.off.mv;
+    return {u, o, ms, verdict, verdictColor, verdictReasons, speedInfo, bestMv, alternatives};
+  }, [activeUser, activeOpp, picks, koUser, userTeam, opponents, pickedUsers]);
+
+  // 残存状況サマリ
+  const aliveUsers = picks.filter((p,i)=> p != null && !koUser[i]).length;
+  const aliveOpps = opponents.filter((o,i)=> o && !koOpp[i]).length;
+  const knownOpps = opponents.filter(Boolean).length;
+
+  // 残存ポケ×残存敵の全マッチアップ（サイド切替判定用）
+  const remainingMatrix = useMemo(() => {
+    const rows = picks.map((pi, i) => {
+      if (pi == null || koUser[i]) return null;
+      const u = userTeam[pi];
+      if (!u) return null;
+      const cols = opponents.map((o, oi) => {
+        if (!o || koOpp[oi]) return null;
+        return {opp:o, oppIdx:oi, ms: matchupScore(u, o)};
+      }).filter(Boolean);
+      return {picksIdx:i, u, cols};
+    }).filter(Boolean);
+    return rows;
+  }, [picks, koUser, koOpp, userTeam, opponents]);
+
+  // ベスト交代先レコメンド（現在のアクティブ相手に対して最良の自軍を算出）
+  const bestSwitches = useMemo(() => {
+    if (activeOpp == null) return [];
+    const o = opponents[activeOpp];
+    if (!o) return [];
+    return picks.map((pi, i) => {
+      if (pi == null || koUser[i] || i === activeUser) return null;
+      const u = userTeam[pi];
+      if (!u) return null;
+      return {idx:i, poke:u, ms: matchupScore(u, o)};
+    }).filter(Boolean).sort((a,b) => b.ms.total - a.ms.total);
+  }, [activeOpp, picks, koUser, userTeam, opponents, activeUser]);
+
+  // 選出候補: 自軍から未選出のもの
+  const availableUserIdxs = userTeam.map((u,i)=>u?i:null).filter(i => i != null && !picks.includes(i));
+
+  if (users.length < 3) {
+    return (
+      <div className="bg-amber-50 border border-amber-300 rounded p-3 text-sm">
+        <IconShield className="w-4 h-4 inline mr-1" />
+        対戦ガイドを使うには自軍を3匹以上登録してください（「自軍登録」タブから）。
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* 進行状況ヘッダー */}
+      <div className="bg-white border rounded-lg p-2.5 flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <span className="font-bold text-gray-700">🎮 対戦ガイド</span>
+          <span className={`px-2 py-0.5 rounded font-bold ${aliveUsers > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-500'}`}>
+            自軍 {aliveUsers}/{pickedCount}
+          </span>
+          <span className={`px-2 py-0.5 rounded font-bold ${aliveOpps > 0 ? 'bg-red-100 text-red-700' : 'bg-gray-200 text-gray-500'}`}>
+            相手 {aliveOpps}/{knownOpps || '?'}
+          </span>
+          {megaPicked > 0 && (
+            <span className="px-2 py-0.5 rounded font-bold bg-purple-100 text-purple-700">
+              💎 メガ{megaPicked}体
+            </span>
+          )}
+        </div>
+        <button onClick={resetBattle}
+          className="text-xs font-bold px-2.5 py-1 rounded border bg-white text-red-600 border-red-300 hover:bg-red-50">
+          🗑 リセット
+        </button>
+      </div>
+
+      {/* STEP1: 選出3匹 */}
+      <div className="bg-white border rounded-lg p-2.5">
+        <div className="text-xs font-bold text-gray-700 mb-1.5">
+          STEP1: 選出3匹
+          {megaPicked >= 2 && <span className="ml-2 text-red-600">⚠ メガは1バトル1体のみ</span>}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {[0,1,2].map(slot => {
+            const pickIdx = picks[slot];
+            const u = pickIdx != null ? userTeam[pickIdx] : null;
+            const ko = koUser[slot];
+            const isActive = activeUser === slot;
+            return (
+              <div key={slot}
+                className={`relative border-2 rounded-lg p-1.5 flex flex-col items-center gap-1 ${
+                  ko ? 'bg-gray-200 border-gray-400 opacity-60'
+                    : isActive ? 'bg-blue-100 border-blue-500'
+                    : u ? (isMega(u) ? 'bg-purple-50 border-purple-300' : 'bg-white border-gray-200')
+                    : 'bg-gray-50 border-dashed border-gray-300'
+                }`}>
+                {u ? (
+                  <>
+                    <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}}
+                      className={`w-14 h-14 object-contain ${ko ? 'grayscale' : ''}`} />
+                    <div className="text-[10px] font-bold truncate max-w-full flex items-center gap-0.5">
+                      {isMega(u) && <span>💎</span>}
+                      <span>{u.jp}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-0.5 justify-center">
+                      {u.types.map(t => <TypeBadge key={t} type={t} size="xs" />)}
+                    </div>
+                    <div className="flex gap-1 mt-0.5">
+                      <button onClick={()=>setActiveUser(isActive ? null : slot)}
+                        disabled={ko}
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                          isActive ? 'bg-blue-600 text-white'
+                          : ko ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                        }`}>
+                        {isActive ? '場' : '出'}
+                      </button>
+                      <button onClick={()=>toggleKoUser(slot)}
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                          ko ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-red-100'
+                        }`}>
+                        {ko ? '復帰' : 'KO'}
+                      </button>
+                      <button onClick={()=>clearUserPick(slot)}
+                        className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-gray-100 text-gray-600 hover:bg-red-100">
+                        ×
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button onClick={()=>setUserPickerOpen(slot)}
+                    className="w-full h-24 flex items-center justify-center text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded">
+                    + 選出{slot+1}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* STEP2: 相手（判明次第登録） */}
+      <div className="bg-white border rounded-lg p-2.5">
+        <div className="text-xs font-bold text-gray-700 mb-1.5">
+          STEP2: 相手（判明次第タップで登録）
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+          {[0,1,2,3,4,5].map(i => {
+            const o = opponents[i];
+            const ko = koOpp[i];
+            const isActive = activeOpp === i;
+            return (
+              <div key={i}
+                className={`relative border rounded p-1 flex flex-col items-center gap-0.5 ${
+                  ko ? 'bg-gray-200 border-gray-400 opacity-60'
+                    : isActive ? 'bg-red-100 border-red-500 border-2'
+                    : o ? 'bg-red-50 border-red-200'
+                    : 'bg-gray-50 border-dashed border-gray-300'
+                }`}>
+                {o ? (
+                  <>
+                    <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}}
+                      className={`w-10 h-10 object-contain ${ko ? 'grayscale' : ''}`} />
+                    <div className="text-[9px] font-bold truncate max-w-full">{o.jp}</div>
+                    <div className="flex gap-0.5">
+                      <button onClick={()=>setActiveOpp(isActive ? null : i)}
+                        disabled={ko}
+                        className={`text-[9px] px-1 py-0.5 rounded font-bold ${
+                          isActive ? 'bg-red-600 text-white'
+                          : ko ? 'bg-gray-200 text-gray-400'
+                          : 'bg-red-100 text-red-700 hover:bg-red-200'
+                        }`}>
+                        {isActive ? '場' : '出'}
+                      </button>
+                      <button onClick={()=>toggleKoOpp(i)}
+                        className={`text-[9px] px-1 py-0.5 rounded font-bold ${
+                          ko ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-red-100'
+                        }`}>
+                        {ko ? '戻' : '✕'}
+                      </button>
+                      <button onClick={()=>clearOppSlot(i)}
+                        className="text-[9px] px-1 py-0.5 rounded font-bold bg-gray-100 text-gray-600 hover:bg-red-100"
+                        title="削除">
+                        🗑
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button onClick={()=>setOppPickerOpen(i)}
+                    className="w-full h-16 flex items-center justify-center text-[10px] text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
+                    + 相手{i+1}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-gray-500 mt-1.5">
+          ※ 出してきた順に登録すれば前半ほど重要。登録しきれなくても推奨は既知の相手から算出します。
+        </div>
+      </div>
+
+      {/* STEP3: 現在の対面 */}
+      {faceOff ? (
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-400 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-bold text-blue-900">⚔ 現在の対面</div>
+          <div className="flex items-center gap-2 justify-center">
+            <div className="text-center flex-1">
+              <img src={pokeImg(faceOff.u)} onError={e=>{e.target.src=pokeImgFallback(faceOff.u)}}
+                className="w-16 h-16 object-contain mx-auto" />
+              <div className="text-xs font-bold">{faceOff.u.jp}</div>
+              <div className="text-[10px] text-gray-500">S{effectiveSpeed(faceOff.u)}</div>
+            </div>
+            <div className="text-2xl font-bold text-gray-400">VS</div>
+            <div className="text-center flex-1">
+              <img src={pokeImg(faceOff.o)} onError={e=>{e.target.src=pokeImgFallback(faceOff.o)}}
+                className="w-16 h-16 object-contain mx-auto" />
+              <div className="text-xs font-bold">{faceOff.o.jp}</div>
+              <div className="text-[10px] text-gray-500">S{effectiveSpeed(faceOff.o)}</div>
+            </div>
+          </div>
+          <div className={`text-center py-1.5 rounded font-bold text-white text-sm ${faceOff.verdictColor}`}>
+            {faceOff.verdict}
+          </div>
+          <div className="text-[11px] space-y-0.5">
+            <div className={faceOff.speedInfo.cls}>🏃 {faceOff.speedInfo.text}</div>
+            {faceOff.bestMv && (
+              <div className="text-gray-700">
+                🎯 推奨技: <b>{faceOff.bestMv.name}</b>
+                {faceOff.ms.off.dmgPct > 0 && <span className="ml-1 text-blue-700">約{faceOff.ms.off.dmgPct}%ダメ</span>}
+                {faceOff.ms.off.stab && <span className="ml-1 text-red-600">⚡STAB</span>}
+                {faceOff.ms.off.mult >= 2 && <span className="ml-1 text-green-700">✨抜群×{faceOff.ms.off.mult}</span>}
+              </div>
+            )}
+            <div className="text-orange-700">🛡 被弾予測: 最大 約{faceOff.ms.thr.dmgPct}%（{faceOff.ms.thr.cat === '物' ? '物理' : '特殊'}/{faceOff.ms.thr.type}）</div>
+            {faceOff.verdictReasons.map((r, i) => (
+              <div key={i} className="text-gray-600">💡 {r}</div>
+            ))}
+          </div>
+          {/* 交代候補 */}
+          {bestSwitches.length > 0 && (
+            <div className="border-t border-blue-200 pt-1.5">
+              <div className="text-[10px] font-bold text-blue-900 mb-1">🔄 交代候補（この相手への相性順）</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {bestSwitches.map(s => (
+                  <button key={s.idx} onClick={()=>setActiveUser(s.idx)}
+                    className={`flex items-center gap-1 border rounded px-1.5 py-0.5 text-[10px] hover:bg-blue-100 ${
+                      s.ms.total >= 2 ? 'bg-green-50 border-green-300 text-green-800'
+                      : s.ms.total >= 0 ? 'bg-white border-gray-300'
+                      : 'bg-orange-50 border-orange-300 text-orange-700'
+                    }`}>
+                    <img src={pokeImg(s.poke)} onError={e=>{e.target.src=pokeImgFallback(s.poke)}} className="w-5 h-5 object-contain" />
+                    <span>{s.poke.jp}</span>
+                    <span className="font-bold">{s.ms.total >= 0 ? '+' : ''}{s.ms.total.toFixed(1)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-3 text-xs text-gray-500 text-center">
+          {pickedCount < 1 ? 'STEP1で選出を決めてください' : '自軍と相手の「出」ボタンを押すと対面推奨が表示されます'}
+        </div>
+      )}
+
+      {/* 残存マッチアップ全景 */}
+      {remainingMatrix.length > 0 && aliveOpps > 0 && (
+        <div className="bg-white border rounded-lg p-2.5">
+          <div className="text-xs font-bold text-gray-700 mb-1.5">📊 残存マッチアップ（数字＝相性スコア）</div>
+          <div className="overflow-x-auto">
+            <table className="text-[10px] border-collapse">
+              <thead>
+                <tr>
+                  <th className="p-1 border-b"></th>
+                  {opponents.map((o,oi) => (o && !koOpp[oi]) && (
+                    <th key={oi} className="p-1 border-b text-center min-w-[48px]">
+                      <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}}
+                        className="w-7 h-7 object-contain mx-auto" />
+                      <div className="text-[9px] truncate max-w-[50px]">{o.jp}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {remainingMatrix.map(row => (
+                  <tr key={row.picksIdx}>
+                    <td className="p-1 border-r">
+                      <div className="flex items-center gap-1">
+                        <img src={pokeImg(row.u)} onError={e=>{e.target.src=pokeImgFallback(row.u)}}
+                          className="w-6 h-6 object-contain" />
+                        <span className="text-[9px] truncate max-w-[50px]">{row.u.jp}</span>
+                      </div>
+                    </td>
+                    {opponents.map((o,oi) => {
+                      if (!o || koOpp[oi]) return null;
+                      const cell = row.cols.find(c => c.oppIdx === oi);
+                      if (!cell) return <td key={oi} className="p-1 text-center">-</td>;
+                      const t = cell.ms.total;
+                      const cls = t >= 5 ? 'bg-green-700 text-white'
+                        : t >= 3 ? 'bg-green-500 text-white'
+                        : t >= 1.5 ? 'bg-emerald-300 text-emerald-900'
+                        : t >= 0 ? 'bg-gray-100 text-gray-700'
+                        : t >= -2 ? 'bg-orange-400 text-white'
+                        : 'bg-red-600 text-white';
+                      return (
+                        <td key={oi} className="p-0.5 text-center">
+                          <span className={`px-1.5 py-0.5 rounded font-bold inline-block ${cls}`}>
+                            {t >= 0 ? '+' : ''}{t.toFixed(1)}
+                          </span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 自軍選出用ピッカー（自軍登録済みから選ぶ） */}
+      {userPickerOpen != null && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setUserPickerOpen(null)}>
+          <div className="bg-white rounded-lg max-w-md w-full p-3" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-sm">選出{userPickerOpen + 1} を選ぶ</h3>
+              <button onClick={()=>setUserPickerOpen(null)} className="p-1 hover:bg-gray-100 rounded"><IconX className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {availableUserIdxs.map(ui => {
+                const u = userTeam[ui];
+                return (
+                  <button key={ui} onClick={()=>toggleUserPick(userPickerOpen, ui)}
+                    className="border rounded p-1.5 hover:bg-blue-50 hover:border-blue-400 transition text-left">
+                    <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-full aspect-square object-contain bg-gray-50 rounded" />
+                    <div className="text-[10px] font-medium text-center mt-1 truncate flex items-center justify-center gap-0.5">
+                      {isMega(u) && <span>💎</span>}
+                      <span>{u.jp}</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {availableUserIdxs.length === 0 && (
+                <div className="col-span-3 text-xs text-gray-500 text-center p-3">
+                  選出可能なポケモンがありません
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 相手ポケモン選択ピッカー（既存） */}
+      {oppPickerOpen != null && (
+        <PokemonPicker onSelect={p=>setOppSlot(oppPickerOpen, p)} onClose={()=>setOppPickerOpen(null)} />
+      )}
+    </div>
+  );
+}
+
 // ====== メイン ======
 function App() {
   const [tab, setTab] = useState('battle');
@@ -3018,18 +3555,23 @@ function App() {
 
         <TeamSlotBar teams={teams} activeIdx={activeIdx} setActiveIdx={setActiveIdx} setTeams={setTeams} />
 
-        <div className="flex gap-1 mb-4 border-b">
+        <div className="flex gap-1 mb-4 border-b overflow-x-auto">
           <button onClick={()=>setTab('battle')}
-            className={`px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition ${tab==='battle'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            <IconSwords className="w-4 h-4" /> 対戦
+            className={`px-3 sm:px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition whitespace-nowrap ${tab==='battle'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            <IconSwords className="w-4 h-4" /> 選出検討
+          </button>
+          <button onClick={()=>setTab('live')}
+            className={`px-3 sm:px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition whitespace-nowrap ${tab==='live'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            🎮 対戦ガイド
           </button>
           <button onClick={()=>setTab('team')}
-            className={`px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition ${tab==='team'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            className={`px-3 sm:px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition whitespace-nowrap ${tab==='team'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
             <IconSettings className="w-4 h-4" /> 自軍登録
           </button>
         </div>
 
         {tab==='battle' && <BattleView opponents={opponents} setOpponents={setOpponents} userTeam={userTeam} />}
+        {tab==='live' && <LiveBattleView userTeam={userTeam} opponents={opponents} setOpponents={setOpponents} />}
         {tab==='team' && <TeamSetup team={userTeam} setTeam={setUserTeam} />}
 
         {showSyncModal && (
