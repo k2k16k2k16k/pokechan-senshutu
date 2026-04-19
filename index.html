@@ -532,6 +532,65 @@ function lookupMove(name) {
   return MOVE_DATA[name] || null;
 }
 
+// ====== 五十音順ソート & ポケ別候補フィルタ ======
+// 日本語ロケールで文字列ソート（ひらがな・カタカナ・漢字対応）
+function sortJP(arr) {
+  return arr.slice().sort((a, b) => String(a).localeCompare(String(b), 'ja'));
+}
+
+// ポケモンを問わずほとんど覚える変化技
+const UNIVERSAL_STATUS_MOVES = new Set([
+  'まもる','みがわり','ねむる','かげぶんしん','ちょうはつ','どくどく','でんじは',
+  'バトンタッチ','ほえる','ふきとばし','しんぴのまもり','じこさいせい',
+  'トリックルーム','リフレクター','ひかりのかべ','しぜんのちから','いばる',
+  'あめごい','にほんばれ','あられ','すなあらし','いちゃもん',
+  'つるぎのまい','わるだくみ','めいそう','りゅうのまい','てっぺき','ちょうのまい',
+  'ドわすれ','ロックカット','コットンガード','アクアリング',
+]);
+// 汎用的に多くのポケモンが打てる/採用されるダメージ技（タイプ一致でなくとも）
+const UNIVERSAL_COVERAGE_MOVES = new Set([
+  'じしん','いわなだれ','ストーンエッジ','がんせきふうじ','いわくだき',
+  'れいとうパンチ','ほのおのパンチ','かみなりパンチ','ばくれつパンチ',
+  'ドレインパンチ','きあいだま','ばかぢから','マッハパンチ','しねんのずつき',
+  'シャドーボール','シャドークロー','かげうち','シャドーパンチ',
+  'バレットパンチ','アイアンヘッド','アイアンテール','ラスターカノン',
+  'どくづき','ヘドロ爆弾','みねうち','のしかかり','すてみタックル',
+  'ヘッドバット','ばくおんぱ','ハイパーボイス','じならし',
+  'しっぺがえし','ふいうち','イカサマ','かみくだく',
+  'とんぼがえり','ボルトチェンジ','ねこだまし','でんこうせっか',
+  'テラバースト',
+]);
+
+// そのポケに候補として見せる技一覧（五十音順）。showAll=true なら全表示
+function movesForPoke(poke, showAll) {
+  const all = sortJP(Object.keys(MOVE_DATA));
+  if (showAll || !poke || !poke.types || poke.types.length === 0) return all;
+  const pokeTypes = new Set(poke.types); // 英字 'fire','water'...
+  return all.filter(name => {
+    const mv = MOVE_DATA[name];
+    if (!mv) return false;
+    // 変化技: ユニバーサル変化技 or タイプ一致のもののみ
+    if (mv.cat === '変') {
+      return UNIVERSAL_STATUS_MOVES.has(name) || pokeTypes.has(mv.type);
+    }
+    // ダメージ技: タイプ一致 or 汎用コーチング技
+    if (pokeTypes.has(mv.type)) return true;
+    if (UNIVERSAL_COVERAGE_MOVES.has(name)) return true;
+    return false;
+  });
+}
+
+// そのポケに候補として見せるとくせい一覧（五十音順）。showAll=true なら全表示
+function abilitiesForPoke(poke, showAll) {
+  const sorted = ABILITIES.slice().sort((a, b) => a.jp.localeCompare(b.jp, 'ja'));
+  if (showAll || !poke || !poke.types || poke.types.length === 0) return sorted;
+  const pokeTypes = new Set(poke.types);
+  return sorted.filter(ab => {
+    if (!ab.typeAffinity) return true; // 汎用
+    return ab.typeAffinity.some(t => pokeTypes.has(t));
+  });
+}
+
 // ====== 持ち物（ポケモンチャンピオンズ実装準拠） ======
 // メガストーンはROSTERで別形態として扱うため省略
 const ITEMS = [
@@ -687,25 +746,26 @@ function isMega(poke) {
 // group: 'immunity'=特定タイプ無効, 'absorb'=吸収, 'resist'=軽減, 'boost'=威力アップ,
 //        'defense'=被ダメ軽減, 'weather'=天候, 'priority'=優先度, 'intimidate'=威嚇系,
 //        'special'=その他戦略
+// typeAffinity: そのとくせいが「合いそうな」ポケモンタイプのヒント（省略=汎用/全タイプ対象）
 const ABILITIES = [
   // --- タイプ無効系 ---
   {id:'ふゆう', jp:'ふゆう', group:'immunity', immuneTypes:['じめん'], desc:'じめん技無効'},
-  {id:'ちょすい', jp:'ちょすい', group:'absorb', immuneTypes:['みず'], desc:'みず技無効・HP回復'},
-  {id:'ちくでん', jp:'ちくでん', group:'absorb', immuneTypes:['でんき'], desc:'でんき技無効・HP回復'},
-  {id:'ひらいしん', jp:'ひらいしん', group:'absorb', immuneTypes:['でんき'], desc:'でんき技無効・特攻↑'},
-  {id:'でんきエンジン', jp:'でんきエンジン', group:'absorb', immuneTypes:['でんき'], desc:'でんき技無効・素早↑'},
-  {id:'よびみず', jp:'よびみず', group:'absorb', immuneTypes:['みず'], desc:'みず技無効・特攻↑'},
-  {id:'もらいび', jp:'もらいび', group:'absorb', immuneTypes:['ほのお'], desc:'ほのお技無効・ほのお技強化'},
-  {id:'そうしょく', jp:'そうしょく', group:'absorb', immuneTypes:['くさ'], desc:'くさ技無効・攻撃↑'},
-  {id:'くさのけがわ', jp:'くさのけがわ', group:'resist', desc:'くさタイプ受け耐性↑'},
-  {id:'たいねつ', jp:'たいねつ', group:'resist', resistTypes:['ほのお'], desc:'ほのお技半減・やけど無効'},
-  {id:'あついしぼう', jp:'あついしぼう', group:'resist', resistTypes:['ほのお','こおり'], desc:'ほのお/こおり技半減'},
+  {id:'ちょすい', jp:'ちょすい', group:'absorb', immuneTypes:['みず'], typeAffinity:['water','grass'], desc:'みず技無効・HP回復'},
+  {id:'ちくでん', jp:'ちくでん', group:'absorb', immuneTypes:['でんき'], typeAffinity:['electric','normal'], desc:'でんき技無効・HP回復'},
+  {id:'ひらいしん', jp:'ひらいしん', group:'absorb', immuneTypes:['でんき'], typeAffinity:['electric','ground'], desc:'でんき技無効・特攻↑'},
+  {id:'でんきエンジン', jp:'でんきエンジン', group:'absorb', immuneTypes:['でんき'], typeAffinity:['electric'], desc:'でんき技無効・素早↑'},
+  {id:'よびみず', jp:'よびみず', group:'absorb', immuneTypes:['みず'], typeAffinity:['water','ground','grass'], desc:'みず技無効・特攻↑'},
+  {id:'もらいび', jp:'もらいび', group:'absorb', immuneTypes:['ほのお'], typeAffinity:['fire'], desc:'ほのお技無効・ほのお技強化'},
+  {id:'そうしょく', jp:'そうしょく', group:'absorb', immuneTypes:['くさ'], typeAffinity:['grass','normal','bug'], desc:'くさ技無効・攻撃↑'},
+  {id:'くさのけがわ', jp:'くさのけがわ', group:'resist', typeAffinity:['grass'], desc:'くさタイプ受け耐性↑'},
+  {id:'たいねつ', jp:'たいねつ', group:'resist', resistTypes:['ほのお'], typeAffinity:['fire','steel','rock'], desc:'ほのお技半減・やけど無効'},
+  {id:'あついしぼう', jp:'あついしぼう', group:'resist', resistTypes:['ほのお','こおり'], typeAffinity:['ice','normal','ground','water'], desc:'ほのお/こおり技半減'},
   {id:'ぼうおん', jp:'ぼうおん', group:'special', desc:'音技無効'},
-  {id:'ぼうじん', jp:'ぼうじん', group:'special', desc:'粉・ほうし技無効'},
+  {id:'ぼうじん', jp:'ぼうじん', group:'special', typeAffinity:['grass','bug','fairy'], desc:'粉・ほうし技無効'},
   // --- 特殊防御/軽減 ---
-  {id:'マルチスケイル', jp:'マルチスケイル', group:'defense', desc:'HP満タン時被ダメ半減'},
+  {id:'マルチスケイル', jp:'マルチスケイル', group:'defense', typeAffinity:['dragon','flying'], desc:'HP満タン時被ダメ半減'},
   {id:'フィルター', jp:'フィルター', group:'defense', desc:'効果抜群技の被ダメ3/4'},
-  {id:'ハードロック', jp:'ハードロック', group:'defense', desc:'効果抜群技の被ダメ3/4'},
+  {id:'ハードロック', jp:'ハードロック', group:'defense', typeAffinity:['rock','steel','ground'], desc:'効果抜群技の被ダメ3/4'},
   {id:'もふもふ', jp:'もふもふ', group:'defense', desc:'接触技半減・ほのお被ダメ2倍'},
   {id:'ファーコート', jp:'ファーコート', group:'defense', desc:'物理被ダメ半減'},
   {id:'マジックガード', jp:'マジックガード', group:'defense', desc:'攻撃技以外のダメージ無効'},
@@ -714,38 +774,38 @@ const ABILITIES = [
   {id:'てきおうりょく', jp:'てきおうりょく', group:'boost', boostMul:1.33, desc:'タイプ一致技×2(STAB1.5→2)'},
   {id:'テクニシャン', jp:'テクニシャン', group:'boost', boostMul:1.5, condition:'lowBP', desc:'威力60以下の技×1.5'},
   {id:'ちからずく', jp:'ちからずく', group:'boost', boostMul:1.3, desc:'追加効果技×1.3(効果は消える)'},
-  {id:'メガランチャー', jp:'メガランチャー', group:'boost', boostMul:1.5, desc:'波動技×1.5'},
-  {id:'てつのこぶし', jp:'てつのこぶし', group:'boost', boostMul:1.2, desc:'パンチ技×1.2'},
-  {id:'すなのちから', jp:'すなのちから', group:'boost', boostMul:1.3, condition:'sand', desc:'砂嵐時 岩/地/鋼×1.3'},
+  {id:'メガランチャー', jp:'メガランチャー', group:'boost', boostMul:1.5, typeAffinity:['water'], desc:'波動技×1.5'},
+  {id:'てつのこぶし', jp:'てつのこぶし', group:'boost', boostMul:1.2, typeAffinity:['fighting','fire','electric','ice','ghost'], desc:'パンチ技×1.2'},
+  {id:'すなのちから', jp:'すなのちから', group:'boost', boostMul:1.3, condition:'sand', typeAffinity:['ground','rock','steel'], desc:'砂嵐時 岩/地/鋼×1.3'},
   {id:'アナライズ', jp:'アナライズ', group:'boost', boostMul:1.3, condition:'slower', desc:'後攻時×1.3'},
   {id:'いろめがね', jp:'いろめがね', group:'special', desc:'いまひとつを等倍化'},
   {id:'かたやぶり', jp:'かたやぶり', group:'special', desc:'相手のとくせいを無視'},
   {id:'ターボブレイズ', jp:'ターボブレイズ', group:'special', desc:'相手のとくせいを無視'},
   {id:'テラボルテージ', jp:'テラボルテージ', group:'special', desc:'相手のとくせいを無視'},
   // --- 優先度/素早さ ---
-  {id:'イタズラゴコロ', jp:'イタズラゴコロ', group:'priority', desc:'変化技+1優先度'},
-  {id:'はやてのつばさ', jp:'はやてのつばさ', group:'priority', desc:'HP満タン時 ひこう技+1優先度'},
+  {id:'イタズラゴコロ', jp:'イタズラゴコロ', group:'priority', typeAffinity:['dark','fairy','grass'], desc:'変化技+1優先度'},
+  {id:'はやてのつばさ', jp:'はやてのつばさ', group:'priority', typeAffinity:['flying','fire'], desc:'HP満タン時 ひこう技+1優先度'},
   {id:'ヒーリングシフト', jp:'ヒーリングシフト', group:'priority', desc:'回復技+3優先度'},
   {id:'かるわざ', jp:'かるわざ', group:'special', desc:'道具消費後 素早×2'},
   // --- 天候 ---
-  {id:'ひでり', jp:'ひでり', group:'weather', weather:'sun', desc:'場に出ると晴れ'},
-  {id:'あめふらし', jp:'あめふらし', group:'weather', weather:'rain', desc:'場に出ると雨'},
-  {id:'すなおこし', jp:'すなおこし', group:'weather', weather:'sand', desc:'場に出ると砂嵐'},
-  {id:'ゆきふらし', jp:'ゆきふらし', group:'weather', weather:'hail', desc:'場に出ると雪/あられ'},
+  {id:'ひでり', jp:'ひでり', group:'weather', weather:'sun', typeAffinity:['fire','normal'], desc:'場に出ると晴れ'},
+  {id:'あめふらし', jp:'あめふらし', group:'weather', weather:'rain', typeAffinity:['water','flying'], desc:'場に出ると雨'},
+  {id:'すなおこし', jp:'すなおこし', group:'weather', weather:'sand', typeAffinity:['rock','ground'], desc:'場に出ると砂嵐'},
+  {id:'ゆきふらし', jp:'ゆきふらし', group:'weather', weather:'hail', typeAffinity:['ice'], desc:'場に出ると雪/あられ'},
   // --- 威嚇系/サポート ---
   {id:'いかく', jp:'いかく', group:'intimidate', desc:'登場時 相手物理攻撃↓'},
   {id:'プレッシャー', jp:'プレッシャー', group:'special', desc:'相手のPP消費×2'},
   {id:'かげふみ', jp:'かげふみ', group:'special', desc:'相手交代不可'},
-  {id:'ありじごく', jp:'ありじごく', group:'special', desc:'相手交代不可(浮遊除く)'},
-  {id:'マグマのよろい', jp:'マグマのよろい', group:'special', desc:'こおり状態無効'},
+  {id:'ありじごく', jp:'ありじごく', group:'special', typeAffinity:['ground'], desc:'相手交代不可(浮遊除く)'},
+  {id:'マグマのよろい', jp:'マグマのよろい', group:'special', typeAffinity:['fire'], desc:'こおり状態無効'},
   // --- その他戦略 ---
-  {id:'ふしぎなうろこ', jp:'ふしぎなうろこ', group:'defense', desc:'状態異常時 防御↑'},
+  {id:'ふしぎなうろこ', jp:'ふしぎなうろこ', group:'defense', typeAffinity:['water','dragon'], desc:'状態異常時 防御↑'},
   {id:'こんじょう', jp:'こんじょう', group:'special', desc:'状態異常時 攻撃↑'},
-  {id:'ヨガパワー', jp:'ヨガパワー', group:'boost', boostMul:2.0, condition:'physical', desc:'物理威力×2'},
+  {id:'ヨガパワー', jp:'ヨガパワー', group:'boost', boostMul:2.0, condition:'physical', typeAffinity:['fighting','psychic'], desc:'物理威力×2'},
   {id:'ちからもち', jp:'ちからもち', group:'boost', boostMul:2.0, condition:'physical', desc:'物理威力×2'},
   {id:'すてみ', jp:'すてみ', group:'boost', boostMul:1.2, desc:'反動技×1.2'},
   {id:'スナイパー', jp:'スナイパー', group:'special', desc:'急所時×2.25'},
-  {id:'かそく', jp:'かそく', group:'special', desc:'毎ターン素早↑'},
+  {id:'かそく', jp:'かそく', group:'special', typeAffinity:['bug','fire'], desc:'毎ターン素早↑'},
   {id:'バトルスイッチ', jp:'バトルスイッチ', group:'special', desc:'フォルム切替'},
   {id:'さいせいりょく', jp:'さいせいりょく', group:'special', desc:'交代時HP1/3回復'},
   {id:'ムラっけ', jp:'ムラっけ', group:'special', desc:'毎ターン能力乱上下'},
@@ -1949,6 +2009,8 @@ function TeamGuide({team}) {
 // ====== 自軍登録 ======
 function TeamSetup({team, setTeam}) {
   const [pickerIdx, setPickerIdx] = useState(null);
+  // 技・とくせい候補の「すべて表示」トグル（OFFで登録ポケに準じたものだけ）
+  const [showAllCandidates, setShowAllCandidates] = useState(false);
 
   // 古い保存データにspd/img等が欠けている場合、ROSTERから補完
   useEffect(() => {
@@ -2027,7 +2089,14 @@ function TeamSetup({team, setTeam}) {
 
   return (
     <div className="space-y-3">
-      <div className="text-sm text-gray-600">自軍6体と各4技を登録。技はタイプだけ合っていればOK（弱点判定に使用）。</div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="text-sm text-gray-600">自軍6体と各4技を登録。技はタイプだけ合っていればOK（弱点判定に使用）。</div>
+        <label className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer select-none bg-white border rounded px-2 py-1">
+          <input type="checkbox" checked={showAllCandidates} onChange={e=>setShowAllCandidates(e.target.checked)} className="accent-blue-600" />
+          <span>候補をすべて表示</span>
+          <span className="text-[9px] text-gray-400">（OFFで登録ポケに合うもののみ・五十音順）</span>
+        </label>
+      </div>
       {team.some(Boolean) && (
         <div className="bg-white border rounded-lg p-2">
           <div className="text-xs font-bold text-gray-600 mb-1.5">素早さ一覧（速い順・スカーフ込み）</div>
@@ -2129,45 +2198,69 @@ function TeamSetup({team, setTeam}) {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-bold text-gray-600 whitespace-nowrap">とくせい</span>
-                    <select value={p.ability || ''} onChange={e=>setAbility(i, e.target.value)}
-                      className="flex-1 border rounded px-2 py-1 text-xs bg-white">
-                      <option value="">— 未設定 —</option>
-                      <optgroup label="◆ タイプ無効/吸収">
-                        {ABILITIES.filter(a => a.group === 'immunity' || a.group === 'absorb').map(a => (
-                          <option key={a.id} value={a.id}>✨ {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="◆ 軽減/耐性">
-                        {ABILITIES.filter(a => a.group === 'resist' || a.group === 'defense').map(a => (
-                          <option key={a.id} value={a.id}>🛡 {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="◆ 威力強化">
-                        {ABILITIES.filter(a => a.group === 'boost').map(a => (
-                          <option key={a.id} value={a.id}>🔥 {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="◆ 優先度/素早さ">
-                        {ABILITIES.filter(a => a.group === 'priority').map(a => (
-                          <option key={a.id} value={a.id}>⚡ {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="◆ 天候">
-                        {ABILITIES.filter(a => a.group === 'weather').map(a => (
-                          <option key={a.id} value={a.id}>☀ {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="◆ 威嚇/妨害">
-                        {ABILITIES.filter(a => a.group === 'intimidate').map(a => (
-                          <option key={a.id} value={a.id}>😤 {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="◆ 特殊戦略">
-                        {ABILITIES.filter(a => a.group === 'special').map(a => (
-                          <option key={a.id} value={a.id}>⚙ {a.jp} — {a.desc}</option>
-                        ))}
-                      </optgroup>
-                    </select>
+                    {(() => {
+                      const abList = abilitiesForPoke(p, showAllCandidates);
+                      // 選択中のとくせいがフィルタ対象外なら、そのままでも選択可能なよう強制的に追加
+                      const hasSelected = !p.ability || abList.some(a => a.id === p.ability);
+                      const selectedAb = !hasSelected ? ABILITY_MAP[p.ability] : null;
+                      const combined = selectedAb ? [...abList, selectedAb] : abList;
+                      const byGroup = (g) => combined.filter(a => g.includes(a.group));
+                      return (
+                        <select value={p.ability || ''} onChange={e=>setAbility(i, e.target.value)}
+                          className="flex-1 border rounded px-2 py-1 text-xs bg-white">
+                          <option value="">— 未設定 —</option>
+                          {byGroup(['immunity','absorb']).length > 0 && (
+                            <optgroup label="◆ タイプ無効/吸収">
+                              {byGroup(['immunity','absorb']).map(a => (
+                                <option key={a.id} value={a.id}>✨ {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {byGroup(['resist','defense']).length > 0 && (
+                            <optgroup label="◆ 軽減/耐性">
+                              {byGroup(['resist','defense']).map(a => (
+                                <option key={a.id} value={a.id}>🛡 {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {byGroup(['boost']).length > 0 && (
+                            <optgroup label="◆ 威力強化">
+                              {byGroup(['boost']).map(a => (
+                                <option key={a.id} value={a.id}>🔥 {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {byGroup(['priority']).length > 0 && (
+                            <optgroup label="◆ 優先度/素早さ">
+                              {byGroup(['priority']).map(a => (
+                                <option key={a.id} value={a.id}>⚡ {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {byGroup(['weather']).length > 0 && (
+                            <optgroup label="◆ 天候">
+                              {byGroup(['weather']).map(a => (
+                                <option key={a.id} value={a.id}>☀ {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {byGroup(['intimidate']).length > 0 && (
+                            <optgroup label="◆ 威嚇/妨害">
+                              {byGroup(['intimidate']).map(a => (
+                                <option key={a.id} value={a.id}>😤 {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {byGroup(['special']).length > 0 && (
+                            <optgroup label="◆ 特殊戦略">
+                              {byGroup(['special']).map(a => (
+                                <option key={a.id} value={a.id}>⚙ {a.jp} — {a.desc}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      );
+                    })()}
                   </div>
                   <div className="text-xs font-bold text-gray-600 pt-1 flex items-center gap-1">
                     <span>わざ</span>
@@ -2195,7 +2288,7 @@ function TeamSetup({team, setTeam}) {
                             <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-amber-600 text-xs font-bold" title="辞書未登録: 手動で設定を">?</span>
                           )}
                           <datalist id={`moves-datalist-${i}-${m}`}>
-                            {Object.keys(MOVE_DATA).map(name => (
+                            {movesForPoke(p, showAllCandidates).map(name => (
                               <option key={name} value={name} />
                             ))}
                           </datalist>
@@ -4662,7 +4755,7 @@ function App() {
       <div className="max-w-6xl mx-auto p-3 sm:p-4">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v2.7 使い方ガイド</span></h1>
+            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v2.8 候補フィルタ</span></h1>
             <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
           </div>
           <div className="flex flex-col items-end gap-1">
