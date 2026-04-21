@@ -3648,6 +3648,7 @@ function OpponentSlot({idx, opp, userTeam, onPick, onClear}) {
 function AnalysisPanel({userTeam, opponents}) {
   const [open, setOpen] = useState(true);
   const [legendOpen, setLegendOpen] = useState(false);
+  const [matrixMode, setMatrixMode] = useState('total'); // 'total'|'offense'|'threat'|'speed'
   const users = userTeam.filter(Boolean);
   const opps = opponents.filter(Boolean);
   const ready = users.length >= 1 && opps.length >= 1;
@@ -3994,15 +3995,38 @@ function AnalysisPanel({userTeam, opponents}) {
 
           {/* マトリクス: 総合マッチアップスコア（攻撃 - 脅威*0.7 + 速度） */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1.5">
               <div className="text-xs font-bold text-gray-600">
                 🔲 相性マトリクス
               </div>
-              <button
-                onClick={()=>setLegendOpen(!legendOpen)}
-                className="text-[10px] text-blue-600 hover:bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                {legendOpen ? '▼ 見方を閉じる' : '▶ 見方の説明'}
-              </button>
+              <div className="flex items-center gap-1 flex-wrap">
+                <div className="inline-flex rounded border overflow-hidden">
+                  {[
+                    {k:'total', label:'総合', on:'bg-indigo-600 text-white'},
+                    {k:'offense', label:'⚔ 与ダメ', on:'bg-red-600 text-white'},
+                    {k:'threat', label:'🛡 被弾', on:'bg-orange-600 text-white'},
+                    {k:'speed', label:'⚡ 速度', on:'bg-sky-600 text-white'},
+                  ].map(m => (
+                    <button key={m.k} onClick={()=>setMatrixMode(m.k)}
+                      className={`text-[10px] font-bold px-2 py-0.5 transition ${
+                        matrixMode === m.k ? m.on : 'bg-white text-gray-700 hover:bg-gray-100'
+                      }`}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={()=>setLegendOpen(!legendOpen)}
+                  className="text-[10px] text-blue-600 hover:bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                  {legendOpen ? '▼ 見方を閉じる' : '▶ 見方の説明'}
+                </button>
+              </div>
+            </div>
+            <div className="text-[10px] text-gray-500 mb-1">
+              {matrixMode === 'total' && '総合: 攻撃スコア − 脅威×0.7 + 速度補正（総合的な有利度）'}
+              {matrixMode === 'offense' && '⚔ 与ダメ視点: 自軍攻撃が相手にどれだけ通るか。色は与ダメ%に連動（緑=大ダメ、赤=通らない）'}
+              {matrixMode === 'threat' && '🛡 被弾視点: 相手攻撃を自軍がどれだけ受けるか。色は被弾%に連動（緑=軽微、赤=致命傷）'}
+              {matrixMode === 'speed' && '⚡ 速度視点: 素早さの差。緑=先手、灰=同速、赤=後手。スカーフ想定時の警戒表示'}
             </div>
 
             {legendOpen && (
@@ -4064,90 +4088,193 @@ function AnalysisPanel({userTeam, opponents}) {
               </div>
             )}
 
-            <div className="text-[10px] text-gray-500 mb-1">
-              緑＝有利 / 灰＝互角 / 橙赤＝不利。数値下の%は与ダメ予測、セルのマウスオーバーで詳細。
-            </div>
-            <div className="overflow-x-auto">
-              <table className="text-xs border-collapse">
-                <thead>
-                  <tr>
-                    <th className="p-1 border bg-gray-50"></th>
-                    {opps.map((o,i) => {
-                      const thr = oppThreats[i] || {threat:0, dmgPct:0};
-                      return (
-                        <th key={i} className={`p-1 border text-center ${thr.threat >= 3 ? 'bg-red-50' : 'bg-gray-50'}`}>
-                          <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-8 h-8 object-contain mx-auto" />
-                          <div className="text-[9px] truncate max-w-[60px]">{o.jp}</div>
-                          <div className="text-[9px] text-gray-500">S{effectiveSpeed(o)||'?'}</div>
-                          {thr.threat > 0 && (
-                            <div className={`text-[9px] font-bold px-0.5 rounded inline-block ${threatColor(thr.threat)}`}
-                              title={`最大被弾予測 ${thr.dmgPct}%`}>
-                              ⚡{thr.dmgPct}%
-                            </div>
-                          )}
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u,ui) => (
-                    <tr key={ui}>
-                      <td className="p-1 border bg-gray-50">
-                        <div className="flex items-center gap-1">
-                          <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-8 h-8 object-contain" />
-                          <div className="min-w-0">
-                            <div className="text-[10px] truncate max-w-[70px]">{u.jp}</div>
-                            <div className="flex items-center gap-0.5">
-                              <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)||'?'}</span>
-                              {u.item && ITEM_MAP[u.item] && <span className="text-[9px]" title={ITEM_MAP[u.item].jp}>{ITEM_MAP[u.item].emoji}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      {opps.map((o,oi) => {
-                        const m = matrix[ui][oi];
-                        const h = m.off; // 攻撃側内訳
-                        const t = m.thr; // 脅威側内訳
-                        const us = effectiveSpeed(u), os = effectiveSpeed(o);
-                        const spdMark = us > os ? '先' : us < os ? '後' : '=';
-                        const spdCls = us > os ? 'text-green-700 bg-green-100' : us < os ? 'text-red-700 bg-red-100' : 'text-gray-500 bg-gray-100';
-                        const bpTag = h?.bpSrc === 'user' ? '入力' : h?.bpSrc === 'special' ? '特殊' : h?.bpSrc === 'dict' ? '辞書' : h?.bpSrc === 'default' ? '推定' : '';
-                        const offTip = h?.mv
-                          ? `🗡 ${h.mv.name||'(無名)'} (${h.mv.cat||'?'}) [威力源:${bpTag}]\n  倍率×${h.mult} 一致${h.stab?'1.5':'1'} 攻${h.offF.toFixed(2)} 防${h.defF.toFixed(2)} 威${h.powF.toFixed(2)} 持${h.itemF.toFixed(2)} 命中${h.accF.toFixed(2)}\n  = 攻撃${h.score.toFixed(2)} (≈${h.dmgPct}%ダメ)`
-                          : '🗡 有効打なし';
-                        const thrTip = t?.type
-                          ? `🛡 敵の想定打点: ${TYPE_JP[t.type]||t.type} ${t.cat||''}技\n  倍率×${t.mult} 被弾予測${t.dmgPct}% → 脅威${t.threat.toFixed(2)}`
-                          : '';
-                        const spdTip = `⚡ 素早さ: 自${us} vs 敵${os} → ${spdMark} (補正${m.speed.toFixed(2)})`;
-                        const tip = `総合 ${m.total.toFixed(2)} = 攻撃${m.offense.toFixed(2)} − 脅威${m.threat.toFixed(2)}×0.7 + 速度${m.speed.toFixed(2)}\n\n${offTip}\n${thrTip}\n${spdTip}`;
-                        return (
-                          <td key={oi} className={`p-1 border text-center font-bold ${matchupColor(m.total)}`} title={tip}>
-                            <div>{fmt(m.total)}</div>
-                            <div className="flex gap-0.5 justify-center items-center text-[8px] font-normal mt-0.5">
-                              {h?.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一</span>}
-                              {h?.itemF > 1 && <span className="px-0.5 rounded bg-amber-200 text-amber-900">持</span>}
-                              {h?.priority > 0 && <span className="px-0.5 rounded bg-sky-200 text-sky-900">先制</span>}
-                              {h?.bpSrc === 'special' && <span className="px-0.5 rounded bg-purple-200 text-purple-900" title="特殊挙動技">特</span>}
-                              {h?.bpSrc === 'default' && <span className="px-0.5 rounded bg-yellow-200 text-yellow-900 border border-yellow-500" title="威力未登録">⚠</span>}
-                              {h?.accF < 1 && <span className="px-0.5 rounded bg-rose-200 text-rose-900" title={`命中${Math.round(h.accF*100)}%`}>{Math.round(h.accF*100)}</span>}
-                              <span className={`px-0.5 rounded ${spdCls}`}>{spdMark}</span>
-                            </div>
-                            {h?.dmgPct > 0 && (
-                              <div className="text-[8px] font-normal opacity-90">
-                                {h.dmgPct}%
+            {(() => {
+              // モード別色関数
+              const offenseColor = (dmg) => {
+                if (!dmg || dmg === 0) return 'bg-red-600 text-white';
+                if (dmg >= 100) return 'bg-green-700 text-white';
+                if (dmg >= 60)  return 'bg-green-500 text-white';
+                if (dmg >= 40)  return 'bg-emerald-300 text-emerald-900';
+                if (dmg >= 25)  return 'bg-yellow-100 text-yellow-800';
+                if (dmg >= 10)  return 'bg-orange-300 text-orange-900';
+                return 'bg-red-500 text-white';
+              };
+              const threatCellColor = (dmg) => { // 低い=良い、高い=悪い
+                if (!dmg || dmg <= 15) return 'bg-green-700 text-white';
+                if (dmg <= 30) return 'bg-green-500 text-white';
+                if (dmg <= 50) return 'bg-emerald-300 text-emerald-900';
+                if (dmg <= 80) return 'bg-yellow-100 text-yellow-800';
+                if (dmg <= 110) return 'bg-orange-400 text-white';
+                return 'bg-red-600 text-white';
+              };
+              const speedCellColor = (diff) => {
+                if (diff > 30) return 'bg-green-700 text-white';
+                if (diff > 0) return 'bg-green-500 text-white';
+                if (diff === 0) return 'bg-gray-300 text-gray-700';
+                if (diff > -30) return 'bg-orange-400 text-white';
+                return 'bg-red-600 text-white';
+              };
+              return (
+                <div className="overflow-x-auto">
+                  <table className="text-xs border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="p-1 border bg-gray-50"></th>
+                        {opps.map((o,i) => {
+                          const thr = oppThreats[i] || {threat:0, dmgPct:0};
+                          return (
+                            <th key={i} className={`p-1 border text-center ${thr.threat >= 3 ? 'bg-red-50' : 'bg-gray-50'}`}>
+                              <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-8 h-8 object-contain mx-auto" />
+                              <div className="text-[9px] truncate max-w-[60px]">{o.jp}</div>
+                              <div className="text-[9px] text-gray-500">S{effectiveSpeed(o)||'?'}</div>
+                              {thr.threat > 0 && (
+                                <div className={`text-[9px] font-bold px-0.5 rounded inline-block ${threatColor(thr.threat)}`}
+                                  title={`最大被弾予測 ${thr.dmgPct}%`}>
+                                  ⚡{thr.dmgPct}%
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u,ui) => (
+                        <tr key={ui}>
+                          <td className="p-1 border bg-gray-50">
+                            <div className="flex items-center gap-1">
+                              <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-8 h-8 object-contain" />
+                              <div className="min-w-0">
+                                <div className="text-[10px] truncate max-w-[70px]">{u.jp}</div>
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-[9px] text-gray-500">S{effectiveSpeed(u)||'?'}</span>
+                                  {u.item && ITEM_MAP[u.item] && <span className="text-[9px]" title={ITEM_MAP[u.item].jp}>{ITEM_MAP[u.item].emoji}</span>}
+                                </div>
                               </div>
-                            )}
+                            </div>
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          {opps.map((o,oi) => {
+                            const m = matrix[ui][oi];
+                            const h = m.off;
+                            const t = m.thr;
+                            const us = effectiveSpeed(u), os = effectiveSpeed(o);
+                            const spdMark = us > os ? '先' : us < os ? '後' : '=';
+                            const spdCls = us > os ? 'text-green-700 bg-green-100' : us < os ? 'text-red-700 bg-red-100' : 'text-gray-500 bg-gray-100';
+                            const bpTag = h?.bpSrc === 'user' ? '入力' : h?.bpSrc === 'special' ? '特殊' : h?.bpSrc === 'dict' ? '辞書' : h?.bpSrc === 'default' ? '推定' : '';
+                            const offTip = h?.mv
+                              ? `🗡 ${h.mv.name||'(無名)'} (${h.mv.cat||'?'}) [威力源:${bpTag}]\n  倍率×${h.mult} 一致${h.stab?'1.5':'1'} 攻${h.offF.toFixed(2)} 防${h.defF.toFixed(2)} 威${h.powF.toFixed(2)} 持${h.itemF.toFixed(2)} 命中${h.accF.toFixed(2)}\n  = 攻撃${h.score.toFixed(2)} (≈${h.dmgPct}%ダメ)`
+                              : '🗡 有効打なし';
+                            const thrTip = t?.type
+                              ? `🛡 敵の想定打点: ${TYPE_JP[t.type]||t.type} ${t.cat||''}技\n  倍率×${t.mult} 被弾予測${t.dmgPct}% → 脅威${t.threat.toFixed(2)}`
+                              : '';
+                            const spdTip = `⚡ 素早さ: 自${us} vs 敵${os} → ${spdMark} (補正${m.speed.toFixed(2)})`;
+                            const tip = `総合 ${m.total.toFixed(2)} = 攻撃${m.offense.toFixed(2)} − 脅威${m.threat.toFixed(2)}×0.7 + 速度${m.speed.toFixed(2)}\n\n${offTip}\n${thrTip}\n${spdTip}`;
+                            // モード別の表示
+                            let cellCls = matchupColor(m.total);
+                            let mainLabel = fmt(m.total);
+                            if (matrixMode === 'offense') {
+                              cellCls = offenseColor(h?.dmgPct || 0);
+                              mainLabel = h?.dmgPct != null ? `${h.dmgPct}%` : '—';
+                            } else if (matrixMode === 'threat') {
+                              cellCls = threatCellColor(t?.dmgPct || 0);
+                              mainLabel = t?.dmgPct != null ? `${t.dmgPct}%` : '—';
+                            } else if (matrixMode === 'speed') {
+                              cellCls = speedCellColor(us - os);
+                              mainLabel = us === os ? '=' : us > os ? `+${us-os}` : `${us-os}`;
+                            }
+                            return (
+                              <td key={oi} className={`p-1 border text-center font-bold ${cellCls}`} title={tip}>
+                                <div className="text-sm">{mainLabel}</div>
+                                <div className="flex gap-0.5 justify-center items-center text-[8px] font-normal mt-0.5 opacity-90">
+                                  {matrixMode !== 'speed' && h?.stab && <span className="px-0.5 rounded bg-yellow-300 text-yellow-900">一</span>}
+                                  {matrixMode !== 'speed' && h?.itemF > 1 && <span className="px-0.5 rounded bg-amber-200 text-amber-900">持</span>}
+                                  {matrixMode !== 'speed' && h?.priority > 0 && <span className="px-0.5 rounded bg-sky-200 text-sky-900">先制</span>}
+                                  {matrixMode === 'offense' && h?.mult != null && h.mult !== 1 && <span className={`px-0.5 rounded ${h.mult >= 2 ? 'bg-green-200 text-green-900' : 'bg-gray-200 text-gray-700'}`}>×{h.mult}</span>}
+                                  {matrixMode === 'threat' && t?.mult != null && t.mult !== 1 && <span className={`px-0.5 rounded ${t.mult >= 2 ? 'bg-red-200 text-red-900' : 'bg-gray-200 text-gray-700'}`}>×{t.mult}</span>}
+                                  {matrixMode !== 'offense' && matrixMode !== 'threat' && h?.bpSrc === 'default' && <span className="px-0.5 rounded bg-yellow-200 text-yellow-900 border border-yellow-500" title="威力未登録">⚠</span>}
+                                  <span className={`px-0.5 rounded ${spdCls}`}>{spdMark}</span>
+                                </div>
+                                {matrixMode === 'total' && h?.dmgPct > 0 && (
+                                  <div className="text-[8px] font-normal opacity-90">{h.dmgPct}%</div>
+                                )}
+                                {matrixMode === 'offense' && h?.mv?.name && (
+                                  <div className="text-[8px] font-normal opacity-90 truncate max-w-[60px] mx-auto">{h.mv.name}</div>
+                                )}
+                                {matrixMode === 'threat' && t?.type && (
+                                  <div className="text-[8px] font-normal opacity-90">{TYPE_JP[t.type]||t.type}{t.cat||''}</div>
+                                )}
+                                {matrixMode === 'speed' && (
+                                  <div className="text-[8px] font-normal opacity-90">{us}vs{os}</div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+            {/* 自チーム攻撃合計 / 相手チーム攻撃合計 の行比較 */}
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="bg-green-50 border border-green-200 rounded p-2">
+                <div className="text-[11px] font-bold text-green-800 mb-1">⚔ 自チーム攻撃の通り (各自軍 → 敵6体の平均%)</div>
+                <div className="space-y-0.5">
+                  {users.map((u,ui) => {
+                    const dmgs = opps.map((_,oi) => matrix[ui][oi].off?.dmgPct || 0);
+                    const avg = dmgs.length ? Math.round(dmgs.reduce((s,d)=>s+d,0) / dmgs.length) : 0;
+                    const best = Math.max(...dmgs);
+                    const worst = Math.min(...dmgs);
+                    const barCls = avg >= 80 ? 'bg-green-600'
+                      : avg >= 50 ? 'bg-emerald-400'
+                      : avg >= 30 ? 'bg-yellow-400'
+                      : avg >= 15 ? 'bg-orange-400'
+                      : 'bg-red-500';
+                    return (
+                      <div key={ui} className="flex items-center gap-1.5 text-[10px]">
+                        <img src={pokeImg(u)} onError={e=>{e.target.src=pokeImgFallback(u)}} className="w-5 h-5 object-contain" />
+                        <span className="truncate max-w-[70px]">{u.jp}</span>
+                        <div className="flex-1 h-3 bg-gray-200 rounded overflow-hidden relative">
+                          <div className={`h-full ${barCls}`} style={{width: `${Math.min(100, avg)}%`}}></div>
+                        </div>
+                        <span className="font-bold w-12 text-right">平均{avg}%</span>
+                        <span className="text-gray-500 w-20 text-right">高{best}/低{worst}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded p-2">
+                <div className="text-[11px] font-bold text-red-800 mb-1">🛡 相手チーム攻撃の脅威 (各敵 → 自軍3〜6体の平均%)</div>
+                <div className="space-y-0.5">
+                  {opps.map((o,oi) => {
+                    const dmgs = users.map((_,ui) => matrix[ui][oi].thr?.dmgPct || 0);
+                    const avg = dmgs.length ? Math.round(dmgs.reduce((s,d)=>s+d,0) / dmgs.length) : 0;
+                    const best = Math.max(...dmgs);
+                    const worst = Math.min(...dmgs);
+                    const barCls = avg >= 80 ? 'bg-red-600'
+                      : avg >= 50 ? 'bg-orange-500'
+                      : avg >= 30 ? 'bg-yellow-500'
+                      : avg >= 15 ? 'bg-emerald-400'
+                      : 'bg-green-500';
+                    return (
+                      <div key={oi} className="flex items-center gap-1.5 text-[10px]">
+                        <img src={pokeImg(o)} onError={e=>{e.target.src=pokeImgFallback(o)}} className="w-5 h-5 object-contain" />
+                        <span className="truncate max-w-[70px]">{o.jp}</span>
+                        <div className="flex-1 h-3 bg-gray-200 rounded overflow-hidden relative">
+                          <div className={`h-full ${barCls}`} style={{width: `${Math.min(100, avg)}%`}}></div>
+                        </div>
+                        <span className="font-bold w-12 text-right">平均{avg}%</span>
+                        <span className="text-gray-500 w-20 text-right">高{best}/低{worst}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
             <div className="text-[10px] text-gray-500 mt-1">
-              ⚡% は被弾最大予測（敵の想定一致技）、総合スコア上の% は最大攻撃での与ダメ予測。
+              ⚡% は被弾最大予測（敵の想定一致技）、マウスオーバーで詳細な計算内訳が確認できます。
             </div>
           </div>
 
@@ -4999,6 +5126,261 @@ function priorityRace(userPoke, opp) {
   return {user:u, opp:o};
 }
 
+// ====== 敵チーム分析エンジン ======
+// 敵構成を分析し、アーキタイプ・警戒点・具体アドバイスを返す
+// 返却: {archetypes, warnings, advice, targets, stats} または null
+function analyzeOppTeam(opps, userTeam) {
+  const o = (opps || []).filter(Boolean);
+  if (o.length === 0) return null;
+  const users = (userTeam || []).filter(Boolean);
+  const archetypes = [];
+  const warnings = [];
+  const advice = [];
+  const targets = [];
+
+  const hasAb = (p, ids) => p.ability && ids.includes(p.ability);
+  const hasMv = (p, names) => (p.moves || []).some(m => m && names.includes(m.name));
+  const withAb = (ids) => o.filter(p => hasAb(p, ids));
+  const withMv = (names) => o.filter(p => hasMv(p, names));
+
+  // === 天候パ ===
+  const weatherDefs = [
+    {key:'rain', icon:'🌧', label:'雨パ', color:'bg-blue-100 border-blue-300 text-blue-900',
+      setAb:['あめふらし'], setMv:['あまごい'],
+      abuseAb:['すいすい','うるおいボディ','かんそうはだ','ひらいしん'],
+      msg:'みず技×1.5、すいすいでS×2。発動役を先に倒すor天候上書き(晴/砂/雪)'},
+    {key:'sun', icon:'☀', label:'晴れパ', color:'bg-amber-100 border-amber-300 text-amber-900',
+      setAb:['ひでり'], setMv:['にほんばれ'],
+      abuseAb:['ようりょくそ','サンパワー','フラワーギフト','メガソーラー'],
+      msg:'ほのお技×1.5、ようりょくそS×2、サンパワーC×1.5。天候上書き or 設置役撃破'},
+    {key:'sand', icon:'🌪', label:'砂パ', color:'bg-yellow-100 border-yellow-300 text-yellow-900',
+      setAb:['すなおこし','すなはき'], setMv:['すなあらし'],
+      abuseAb:['すなかき','すなちらし','すなのちから'],
+      msg:'岩タイプDは1.5倍、1/16スリップ(岩地鋼以外)。すなかき勢はS×2'},
+    {key:'snow', icon:'❄', label:'雪パ', color:'bg-cyan-100 border-cyan-300 text-cyan-900',
+      setAb:['ゆきふらし'], setMv:['ゆきげしき'],
+      abuseAb:['ゆきかき','アイスボディ','アイスフェイス'],
+      msg:'氷タイプB1.5倍、ふぶき命中100。オーロラベールで物特半減5Tに警戒'},
+  ];
+  let detectedWeather = null;
+  for (const w of weatherDefs) {
+    const setters = [...withAb(w.setAb), ...withMv(w.setMv).filter(p => !hasAb(p, w.setAb))];
+    const uniq = [...new Map(setters.map(p=>[p.jp,p])).values()];
+    const abusers = withAb(w.abuseAb);
+    if (uniq.length > 0 && abusers.length > 0) {
+      archetypes.push({
+        key:w.key, icon:w.icon, label:w.label, color:w.color,
+        confidence: abusers.length >= 2 ? 'high' : 'mid',
+        evidence: [
+          ...uniq.map(p => `${p.jp}(発動)`),
+          ...abusers.map(p => `${p.jp}(${w.key}エース)`),
+        ]
+      });
+      warnings.push({severity:'high', icon:w.icon, text:`${w.label}: ${w.msg}`});
+      uniq.forEach(p => targets.push({poke:p, reason:`${w.label}の起点。倒せば${abusers.map(a=>a.jp).join('/')}の${w.key}バフ無力化`, priority:3}));
+      detectedWeather = w.key;
+    } else if (uniq.length > 0) {
+      // setterあるがabuser不明 → 軽めの警戒
+      warnings.push({severity:'low', icon:w.icon, text:`${w.label}起点の可能性: ${uniq.map(p=>p.jp).join('・')}が${w.label}を展開。エース役がまだ判明していない`});
+    }
+  }
+
+  // === トリックルーム ===
+  const trSetters = withMv(['トリックルーム']);
+  const slowMons = o.filter(p => effectiveSpeed(p) > 0 && effectiveSpeed(p) < 70);
+  const fastMons = o.filter(p => effectiveSpeed(p) > 100);
+  if (trSetters.length > 0) {
+    const slowAbusers = slowMons.filter(p => !trSetters.some(t => t.jp === p.jp));
+    if (slowAbusers.length >= 1 || slowMons.length >= 2) {
+      archetypes.push({
+        key:'tr', icon:'🕳', label:'トリックルームパ', color:'bg-purple-100 border-purple-300 text-purple-900',
+        confidence: slowAbusers.length >= 2 ? 'high' : 'mid',
+        evidence: [
+          ...trSetters.map(p=>`${p.jp}(TR発動)`),
+          ...slowAbusers.map(p=>`${p.jp}(低速エース S${effectiveSpeed(p)})`),
+        ]
+      });
+      warnings.push({severity:'high', icon:'🕳', text:`トリックルーム展開: 5T素早さ逆転。${slowMons.map(p=>`${p.jp}(S${effectiveSpeed(p)})`).join('・')}が先制して暴れる。ちょうはつ・急所撃破・TR発動ターン潰し推奨`});
+      trSetters.forEach(p => targets.push({poke:p, reason:'TR発動役。ちょうはつ/即KOで展開阻止', priority:3}));
+    }
+  }
+
+  // === ハザード / 撒き物 ===
+  const hazardDefs = [
+    {name:'ステルスロック', icon:'🪨', key:'sr', msg:'登場時1/8HP削り(岩4倍で1/2)。ひこう/むし/ほのお/こおり/ひこう4倍のポケは出すだけで瀕死圏。タスキ即破壊'},
+    {name:'まきびし', icon:'🧷', key:'spikes', msg:'登場時1/8〜1/4削り(層数依存)。ひこう/ふゆう/ぎせいだは無効'},
+    {name:'どくびし', icon:'🧪', key:'tspikes', msg:'登場時どく(2層で猛毒)。どく/はがねで除去、ひこう/ふゆうは無効'},
+    {name:'ねばねばネット', icon:'🕸', key:'web', msg:'登場時S-1。先制技や対面選定に致命的、ひこう/ふゆう/クリアボディは無効'},
+  ];
+  const hazardsFound = [];
+  for (const h of hazardDefs) {
+    const setters = withMv([h.name]);
+    if (setters.length > 0) {
+      hazardsFound.push({...h, setters});
+      warnings.push({severity:'high', icon:h.icon, text:`${h.name}: ${h.msg} (設置役: ${setters.map(p=>p.jp).join('・')})`});
+    }
+  }
+  if (hazardsFound.length >= 2) {
+    archetypes.push({
+      key:'hazards', icon:'🧷', label:'ハザードスタック', color:'bg-orange-100 border-orange-300 text-orange-900',
+      confidence: hazardsFound.length >= 3 ? 'high' : 'mid',
+      evidence: hazardsFound.flatMap(h => h.setters.map(p => `${p.jp}: ${h.name}`))
+    });
+    // 設置役の優先撃破
+    hazardsFound.forEach(h => h.setters.forEach(p => {
+      if (!targets.some(t => t.poke.jp === p.jp))
+        targets.push({poke:p, reason:`${h.name}設置役。初手で撃破して設置阻止`, priority:2});
+    }));
+  }
+
+  // === 積み型 ===
+  const setupAtkMoves = ['つるぎのまい','りゅうのまい','わるだくみ','ちょうのまい','からをやぶる','ビルドアップ','バルクアップ','めいそう','コスモパワー','ドわすれ','てっぺき','コットンガード'];
+  const setupAces = o.filter(p => (p.moves||[]).some(m => setupAtkMoves.includes(m.name)));
+  if (setupAces.length > 0) {
+    const multiSetup = setupAces.filter(p => (p.moves||[]).filter(m => setupAtkMoves.includes(m.name)).length >= 2);
+    archetypes.push({
+      key:'setup', icon:'💪', label:'積みエース型', color:'bg-red-100 border-red-300 text-red-900',
+      confidence: setupAces.length >= 2 ? 'high' : 'mid',
+      evidence: setupAces.map(p=>`${p.jp}(${(p.moves||[]).filter(m=>setupAtkMoves.includes(m.name)).map(m=>m.name).join('/')})`)
+    });
+    warnings.push({severity:'high', icon:'💪', text:`積みエース警戒: ${setupAces.map(p=>p.jp).join('・')}。ちょうはつ/急所/確1 or 受けでリセット。1Tでも積ませると手遅れになる個体に注意`});
+    setupAces.forEach(p => targets.push({poke:p, reason:'積み前に削るor処理。ちょうはつ/急所で起点化阻止', priority: multiSetup.includes(p) ? 3 : 2}));
+  }
+
+  // === 先制技持ち ===
+  const priorityMons = o.filter(p => (p.moves||[]).some(m => movePriority(m) > 0 && m.cat !== '変'));
+  if (priorityMons.length > 0) {
+    const details = priorityMons.map(p => {
+      const pri = (p.moves||[]).find(m => movePriority(m) > 0 && m.cat !== '変');
+      return `${p.jp}(${pri.name}+${movePriority(pri)})`;
+    });
+    warnings.push({severity:'mid', icon:'⚡', text:`先制技: ${details.join('・')}。瀕死圏の自軍は引き or 耐久補強`});
+  }
+  // プリオリ特性（はやてのつばさ/しんりょく系）
+  const priorityAbs = o.filter(p => p.ability && ['はやてのつばさ','ふゆう','はりきり','ファーコート','マルチスケイル'].includes(p.ability));
+
+  // === いかく ===
+  const intimidaters = withAb(['いかく']);
+  if (intimidaters.length > 0) {
+    warnings.push({severity:'mid', icon:'😤', text:`いかく: ${intimidaters.map(p=>p.jp).join('・')}。自軍物理アタッカーはA-1で火力減。繰り出し毎に発動 → 積極的に特殊技/ミラー/しろいけむり組で対処`});
+  }
+
+  // === メガ ===
+  const megas = o.filter(p => isMega(p));
+  if (megas.length > 1) {
+    warnings.push({severity:'mid', icon:'💎', text:`メガ候補複数: ${megas.map(p=>p.jp).join('・')}。相手はこのうち1体だけメガ化。対面で「素」のステを想定しつつ、最も怖いメガを読んで対策`});
+  } else if (megas.length === 1) {
+    warnings.push({severity:'low', icon:'💎', text:`メガ: ${megas[0].jp}。能力値・タイプが変化する可能性あり`});
+  }
+
+  // === 状態異常/補助技 ===
+  const statusAtkMoves = ['どくどく','おにび','でんじは','あくび','ちょうはつ'];
+  const statusMons = o.filter(p => (p.moves||[]).some(m => statusAtkMoves.includes(m.name)));
+  if (statusMons.length >= 2) {
+    const statusList = statusMons.flatMap(p => (p.moves||[]).filter(m => statusAtkMoves.includes(m.name)).map(m => `${p.jp}:${m.name}`));
+    warnings.push({severity:'mid', icon:'☠', text:`状態異常マシ: ${statusList.join('/')}。ラムのみ/しろいハーブ/しんぴのまもり持ちや、同じ状態を既に抱えたポケが対策`});
+  }
+
+  // === 物理/特殊偏重 ===
+  const catCount = {phys:0, spec:0, mixed:0, none:0};
+  o.forEach(p => {
+    const c = classifyByMoves(p.moves);
+    if (!c) { catCount.none++; return; }
+    catCount[c.key]++;
+  });
+  if (catCount.phys >= Math.max(3, Math.floor(o.length * 0.6))) {
+    warnings.push({severity:'low', icon:'🥊', text:`物理偏重 (${catCount.phys}/${o.length})。ファーコート/ふしぎなうろこ/いかく/リフレクター/高B受けで崩しにくくする`});
+  }
+  if (catCount.spec >= Math.max(3, Math.floor(o.length * 0.6))) {
+    warnings.push({severity:'low', icon:'✨', text:`特殊偏重 (${catCount.spec}/${o.length})。ひかりのかべ/高D受け/めいそう積みでケア`});
+  }
+
+  // === 受け/耐久型検出 ===
+  const recoveryMoves = ['じこさいせい','タマゴうみ','はねやすめ','つきのひかり','あさのひざし','こうごうせい','ねむる','ミルクのみ','なまけをなおす'];
+  const stallers = o.filter(p => {
+    const sCount = (p.moves||[]).filter(m => statusAtkMoves.includes(m.name)).length;
+    const hasRec = (p.moves||[]).some(m => recoveryMoves.includes(m.name));
+    return sCount >= 1 && hasRec;
+  });
+  if (stallers.length >= 2) {
+    archetypes.push({
+      key:'stall', icon:'🛡', label:'受けパ', color:'bg-green-100 border-green-300 text-green-800',
+      confidence: stallers.length >= 3 ? 'high' : 'mid',
+      evidence: stallers.map(p=>p.jp)
+    });
+    warnings.push({severity:'mid', icon:'🛡', text:`受け構成: ${stallers.map(p=>p.jp).join('・')}。毒+回復で粘る。ちょうはつ/かたやぶり/マジックミラー/ゾロア系の高火力で強引に崩す or PP切らし戦術`});
+  }
+
+  // === HO(高速展開型) ===
+  const avgSpd = o.length ? o.reduce((s,p)=>s+effectiveSpeed(p),0)/o.length : 0;
+  if (avgSpd > 95 && catCount.phys + catCount.spec >= 5) {
+    archetypes.push({
+      key:'ho', icon:'💥', label:'高速展開型(HO)', color:'bg-pink-100 border-pink-300 text-pink-900',
+      confidence: 'mid',
+      evidence: [`平均S${Math.round(avgSpd)}`, `全員アタッカー傾向`]
+    });
+    warnings.push({severity:'mid', icon:'💥', text:`高速アタッカー6体構成。こだわりスカーフ/リフレクター/ひかりのかべで火力を抑える or 先制技で崩す`});
+  }
+
+  // === 具体アドバイス生成 ===
+  // 1) 優先撃破ターゲット
+  const uniqTargets = [];
+  const seen = new Set();
+  targets.sort((a,b) => b.priority - a.priority).forEach(t => {
+    if (!seen.has(t.poke.jp)) {
+      seen.add(t.poke.jp);
+      uniqTargets.push(t);
+    }
+  });
+  if (uniqTargets.length > 0) {
+    advice.push({tier:'high', icon:'🎯', text:'優先撃破推奨', subs: uniqTargets.slice(0, 4).map(t => `${t.poke.jp} — ${t.reason}`)});
+  }
+
+  // 2) 自軍vs敵 マッチアップ評価
+  if (users.length > 0) {
+    const assignments = o.map(opp => {
+      let best = null, worst = null;
+      for (const u of users) {
+        const s = matchupScore(u, opp);
+        if (!best || s.total > best.score) best = {u, score:s.total};
+        if (!worst || s.total < worst.score) worst = {u, score:s.total};
+      }
+      return {opp, best, worst};
+    });
+    const strong = assignments.filter(a => a.best && a.best.score >= 2);
+    const weak = assignments.filter(a => a.best && a.best.score < -0.5);
+    if (strong.length > 0) {
+      advice.push({tier:'mid', icon:'✅', text:'有利マッチアップ', subs: strong.map(a=>`${a.best.u.jp} → ${a.opp.jp} (+${a.best.score.toFixed(1)})`)});
+    }
+    if (weak.length > 0) {
+      advice.push({tier:'warn', icon:'🚨', text:'処理困難', subs: weak.map(a=>`${a.opp.jp}: 最良担当 ${a.best.u.jp} でも ${a.best.score.toFixed(1)}。持ち物/技の見直し推奨`)});
+    }
+    // 3) スカーフ警戒（自軍全員が相手の素早さ上位に抜かれる可能性）
+    const oppMaxSpd = Math.max(...o.map(p => effectiveSpeed(p)));
+    const userMaxSpd = users.length ? Math.max(...users.map(u => effectiveSpeed(u))) : 0;
+    if (oppMaxSpd * 1.5 > userMaxSpd && oppMaxSpd > 0) {
+      const topSpd = o.filter(p => effectiveSpeed(p) >= oppMaxSpd - 5).map(p => p.jp).slice(0,2);
+      advice.push({tier:'low', icon:'👟', text:`スカーフ警戒: ${topSpd.join('・')}がスカーフならS${Math.floor(oppMaxSpd*1.5)}で自軍最速(S${userMaxSpd})を抜く`});
+    }
+  }
+
+  // 4) 天候対抗策
+  if (detectedWeather && users.length > 0) {
+    const userWeather = users.find(u => {
+      const ab = u.ability ? ABILITY_MAP[u.ability] : null;
+      if (ab?.group === 'weather') return true;
+      return (u.moves||[]).some(m => ['あまごい','にほんばれ','すなあらし','ゆきげしき'].includes(m.name));
+    });
+    if (userWeather) {
+      advice.push({tier:'mid', icon:'☁', text:`天候上書き可能: ${userWeather.jp}で相手の${detectedWeather}を潰せる`});
+    } else {
+      advice.push({tier:'low', icon:'☁', text:'天候上書き手段なし。設置役撃破or天候ターン切れまで耐える方針に'});
+    }
+  }
+
+  return {archetypes, warnings, advice, targets:uniqTargets, stats:{avgSpd:Math.round(avgSpd), physCount:catCount.phys, specCount:catCount.spec, total:o.length}};
+}
+
 // ====== 対戦ガイド（バトル中のリアルタイム判断支援） ======
 // フロー:
 //   1) 自軍から3匹を選出（メガ2体は除外）
@@ -5015,6 +5397,7 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
   const [activeOpp, setActiveOpp] = useState(null); // opponents内のindex
   const [userPickerOpen, setUserPickerOpen] = useState(null); // picks内のindex
   const [oppPickerOpen, setOppPickerOpen] = useState(null); // opponents内のindex
+  const [analysisOpen, setAnalysisOpen] = useState(true);   // 敵構成分析パネル開閉
   // フィールド状態トラッカー
   const [field, setField] = useState({
     weather: null,   // 'sun'|'rain'|'sand'|'snow'|null
@@ -5440,6 +5823,9 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
     return {perOpp, verdict, verdictCls, aliveU, aliveO, noPositive, strongWin};
   }, [picks, koUser, koOpp, userTeam, opponents]);
 
+  // 敵チーム分析（アーキタイプ・警戒・具体アドバイス）
+  const oppAnalysis = useMemo(() => analyzeOppTeam(opponents, userTeam), [opponents, userTeam]);
+
   // 選出候補: 自軍から未選出のもの
   const availableUserIdxs = userTeam.map((u,i)=>u?i:null).filter(i => i != null && !picks.includes(i));
 
@@ -5475,6 +5861,112 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
           🗑 リセット
         </button>
       </div>
+
+      {/* 敵構成 分析パネル */}
+      {oppAnalysis && (oppAnalysis.archetypes.length > 0 || oppAnalysis.warnings.length > 0 || oppAnalysis.advice.length > 0) && (
+        <div className="bg-gradient-to-br from-red-50 via-amber-50 to-yellow-50 border-2 border-amber-400 rounded-lg p-2.5">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-sm font-bold text-amber-900">
+              🔍 敵構成分析 <span className="text-[10px] text-gray-500 font-normal">({oppAnalysis.stats.total}体登録)</span>
+            </div>
+            <button onClick={()=>setAnalysisOpen(!analysisOpen)}
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white text-amber-700 hover:bg-amber-100">
+              {analysisOpen ? '▼ 閉じる' : '▶ 開く'}
+            </button>
+          </div>
+          {/* アーキタイプ（構成タイプ）バッジ */}
+          {oppAnalysis.archetypes.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {oppAnalysis.archetypes.map((a,i) => (
+                <div key={i} className={`border rounded-full px-2 py-0.5 text-[11px] font-bold ${a.color}`}
+                  title={a.evidence.join('\n')}>
+                  {a.icon} {a.label}
+                  {a.confidence === 'high' ? ' ●' : a.confidence === 'mid' ? ' ◐' : ''}
+                </div>
+              ))}
+              {oppAnalysis.archetypes.length === 0 && (
+                <div className="text-[11px] text-gray-500">標準構成（特定アーキタイプは検出されず）</div>
+              )}
+            </div>
+          )}
+
+          {analysisOpen && (
+            <div className="space-y-2">
+              {/* 警戒ポイント */}
+              {oppAnalysis.warnings.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold text-red-800 mb-0.5">⚠ 警戒ポイント</div>
+                  <div className="space-y-0.5">
+                    {oppAnalysis.warnings.map((w,i) => {
+                      const cls = w.severity === 'high' ? 'bg-red-100 border-red-300 text-red-900'
+                        : w.severity === 'mid' ? 'bg-amber-50 border-amber-300 text-amber-900'
+                        : 'bg-gray-50 border-gray-300 text-gray-700';
+                      return (
+                        <div key={i} className={`border rounded px-2 py-1 text-[11px] ${cls}`}>
+                          <span className="mr-1">{w.icon}</span>{w.text}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 具体アドバイス */}
+              {oppAnalysis.advice.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold text-blue-800 mb-0.5">💡 具体アドバイス</div>
+                  <div className="space-y-1">
+                    {oppAnalysis.advice.map((a,i) => {
+                      const cls = a.tier === 'high' ? 'bg-blue-100 border-blue-400'
+                        : a.tier === 'warn' ? 'bg-red-50 border-red-300'
+                        : a.tier === 'mid' ? 'bg-emerald-50 border-emerald-300'
+                        : 'bg-gray-50 border-gray-300';
+                      return (
+                        <div key={i} className={`border rounded px-2 py-1 text-[11px] ${cls}`}>
+                          <div className="font-bold">{a.icon} {a.text}</div>
+                          {a.subs && (
+                            <ul className="mt-0.5 space-y-0.5 list-disc list-inside text-gray-700">
+                              {a.subs.map((s,j) => <li key={j}>{s}</li>)}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 優先撃破ターゲット（画像付きで強調表示） */}
+              {oppAnalysis.targets.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold text-purple-800 mb-0.5">🎯 最優先撃破ターゲット</div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {oppAnalysis.targets.slice(0, 3).map((t,i) => {
+                      const oi = opponents.findIndex(o => o && o.jp === t.poke.jp);
+                      const isKo = oi >= 0 && koOpp[oi];
+                      return (
+                        <button key={i}
+                          disabled={oi < 0 || isKo}
+                          onClick={() => oi >= 0 && setActiveOpp(oi)}
+                          className={`flex flex-col items-center border-2 rounded-lg p-1 min-w-[100px] text-[10px] ${
+                            isKo ? 'bg-gray-200 border-gray-400 opacity-50'
+                              : t.priority >= 3 ? 'bg-red-50 border-red-500'
+                              : 'bg-amber-50 border-amber-400'
+                          } hover:shadow-md transition`}>
+                          <img src={pokeImg(t.poke)} onError={e=>{e.target.src=pokeImgFallback(t.poke)}}
+                            className={`w-12 h-12 object-contain ${isKo ? 'grayscale' : ''}`} />
+                          <div className="font-bold">{t.poke.jp}{isKo && ' ✕'}</div>
+                          <div className="text-[9px] text-gray-600 text-center leading-tight">{t.reason}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* STEP1: 選出3匹 */}
       <div className="bg-white border rounded-lg p-2.5">
@@ -6392,7 +6884,7 @@ function App() {
       <div className="max-w-6xl mx-auto p-3 sm:p-4">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.6 対戦ガイド強化</span></h1>
+            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.7 敵構成分析+マトリクス視点切替</span></h1>
             <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
           </div>
           <div className="flex flex-col items-end gap-1">
