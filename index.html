@@ -6684,6 +6684,346 @@ function LiveBattleView({userTeam, opponents, setOpponents}) {
   );
 }
 
+// ====== 固定構築: ピクシーバトンリレー (yakkun n7339) ======
+const FIXED_PARTY_META = {
+  title: 'ピクシーバトンリレー構築',
+  author: 'jsBGzdYfhk98404',
+  rank: 'チャンピオン級レート2379 / 最高49位',
+  url: 'https://yakkun.com/bbs/party/n7339',
+  concept: 'ピクシー（バトン先）を軸にしたバトンリレー + イダイトウサイクル。クエス→ピクシー→ブリジュラスで全抜きを狙う表選出と、メガカイリュー+イダイトウ+ヒートロトムの裏選出を使い分ける2軸構築。',
+};
+const FIXED_PARTY_DATA = [
+  {
+    rosterId: '1198', // クエスパトラ
+    item: 'sitrus',
+    ability: 'かそく',
+    nature: 'おくびょう',
+    evs: 'H252 / B220 / S44',
+    stats: [202, 72, 108, 121, 80, 144],
+    moves: ['めいそう', 'まもる', 'ルミナコリジョン', 'バトンタッチ'],
+    role: 'バトンパス起点',
+    roleIcon: '⚡',
+    color: 'violet',
+    desc: 'バトンパの起点。物理耐久に厚く振ることでどんな対面でも1回はめいそうを積んで後続につなげる。バトンに執着せずルミナコリジョンで殴るのが大事。ルカリオ初手ならバトン狙わずルミナコリジョン×2で倒しにいく立ち回り。Sは最速スカーフイダイトウを「まもる」1回で抜けるライン。',
+    calc: 'H2メガルカリオ 41.4%〜49.6%（D-2込みで確定2発耐え）',
+  },
+  {
+    rosterId: '49', // ピクシー（ベース）+ メガ石
+    item: 'mega_clefable',
+    ability: 'マジックミラー',
+    abilityBefore: 'てんねん',
+    nature: 'ずぶとい',
+    evs: 'H252 / B252 / D12',
+    stats: [202, 90, 159, 155, 132, 90],
+    moves: ['ムーンフォース', 'めいそう', 'バトンタッチ', 'つきのひかり'],
+    role: 'バトン先①・選出誘導',
+    roleIcon: '🌸',
+    color: 'pink',
+    desc: 'バトン先の筆頭。選出がバレバレになるため、手持ちにいるだけで選出誘導能力が高く、実際は選出せずにブリジュラスやメガカイリューにバトン先を渡すことも多い。コスモパワーで全抜きを狙うと急所・状態異常の負け筋が大きいのでバトンタッチを採用。メガ前「天然」なのでクエスパトラのめいそう積み合い後、バトンすれば必ず勝てる。つきのひかりをかえんほうしゃに変えるのも一考。',
+    calc: null,
+  },
+  {
+    rosterId: '1271', // ブリジュラス
+    item: 'chesto',
+    ability: 'じきゅうりょく',
+    nature: 'おだやか',
+    evs: 'H252 / B12 / D252',
+    stats: [197, 112, 152, 145, 128, 105],
+    moves: ['りゅうのはどう', 'はどうだん', '10まんボルト', 'ねむる'],
+    role: 'バトン先②・裏ボス',
+    roleIcon: '👑',
+    color: 'emerald',
+    desc: 'この構築の裏ボス。ピクシーに出てくる毒・鋼・高火力物理をまとめて破壊する。ねむるが何より読まれない。防御も特防もがちがちなのでちまちま削るしかないが、絶望の全回復をお見舞いする。ガルーラ・スターミー・多くの物理に有利。バトン前がめいそうなので特殊技構成だが、つるぎの舞＋ドラクロ＋じしんも面白い。ギルガルドがせいなるつるぎ持ちだと出しづらくなる。',
+    calc: '特化A32ギルガルドせいなるつるぎ 47.7%〜56.8% / 無振りでも 36.5%〜43.6%（ねむるでは耐えられず）',
+  },
+  {
+    rosterId: '1129', // イダイトウ(オス)
+    item: 'choice_scarf',
+    ability: 'てきおうりょく',
+    nature: 'ようき',
+    evs: 'H12 / A252 / S252',
+    stats: [197, 164, 85, 90, 95, 143],
+    moves: ['おはかまいり', 'クイックターン', 'ウェーブタックル', 'アクアジェット'],
+    role: '裏選出のエース',
+    roleIcon: '🗡',
+    color: 'sky',
+    desc: 'バトンが通らないときの裏選出の要。スカーフイダイトウのパワーがあまりにも高い。クイックターンのひき先として相性補完のいいロトムを採用しているのでボルチェンをうまく使って繰り出す。',
+    calc: '150おはかまいり H2ガブリアス 87.5%〜103.7% 乱数1発(25%) / A特化ミミッキュ+2かげうち 85.2%〜100.5% 乱数1発(6.3%)',
+  },
+  {
+    rosterId: '597', // ヒートロトム
+    item: 'leftovers',
+    ability: 'ふゆう',
+    nature: 'ひかえめ',
+    evs: 'H252 / B148 / C116',
+    stats: [157, 76, 146, 154, 127, 106],
+    moves: ['オーバーヒート', 'まもる', 'おにび', 'ボルトチェンジ'],
+    role: 'イダイトウの相性補完',
+    roleIcon: '🔥',
+    color: 'orange',
+    desc: 'イダイトウをエースとする場合に相性補完のいいポケモン。イダイトウの苦手なかげうち使い(ギルガルド/ミミッキュ)に有利をとりつつ、ボルチェンや鬼火でうまくイダイトウを通していく。まもる+たべのこしでHP管理をしっかり。表選出のピクシーが鋼を呼びまくるのでそれを咎めればイージーウィン。Cは11n、Bはイダイトウのおはかまいりを耐える意図（イダイトウロトムサイクルの一貫切るため）。',
+    calc: '準速A32イダイトウてきおうりょく150 80.3%〜95.6%（耐える）',
+  },
+  {
+    rosterId: '200', // カイリュー（ベース）+ メガ石
+    item: 'mega_dragonite',
+    ability: 'マルチスケイル',
+    nature: 'ひかえめ',
+    evs: 'H252 / C252 / S12',
+    stats: [198, 129, 135, 216, 145, 122],
+    moves: ['りゅうせいぐん', 'かえんほうしゃ', 'しんそく', '10まんボルト'],
+    role: '初手エース・バトン先サブ',
+    roleIcon: '🐉',
+    color: 'indigo',
+    desc: '基本は初手で投げてタイマンで必ず1体持っていく。一致りゅうせいぐん＋鋼打点かえんほうしゃ＋先制しんそく＋アシレーヌに詰まないよう10まんボルト。メガピクシーの通りが悪い時にバトン先としてもOK（単体で強いのでクエスパトラは殴って落ちても大丈夫な安心感）。ピクシー相手にギルガルド・ハッサムがわんさか出てくるのでかえんほうしゃでしっかり倒す。',
+    calc: 'H32-D1ギルガルド かえんほうしゃ 55%〜65.8%',
+  },
+];
+const SELECTION_PATTERNS = [
+  {
+    label: 'パターン①（表選出・バトンリレー）',
+    order: ['1198', '49', '1271'],
+    names: ['クエスパトラ', 'メガピクシー', 'ブリジュラス'],
+    desc: 'まず①が通るかどうかを判断。上位30位のうち比較的刺さりづらいのはゲンガー/ハッサム/ギルガルド/マスカーニャ/ルカリオ。これらが2体以上いる場合は②推奨。1体の場合、バトンが多少不完全（例:1めいそう2加速）でもブリジュラスで全抜き出来そうなら選出OK。ピクシーが見えているだけで相手のカバルドン等が補助技でバトンを止める動きができないので、クエス+ブリジュラスで十分な場合も。',
+  },
+  {
+    label: 'パターン②（裏選出・イダイトウサイクル）',
+    order: ['201', '1129', '597'],
+    names: ['メガカイリュー', 'イダイトウ', 'ヒートロトム'],
+    desc: '①が通りづらい相手には②が刺さるように構築。相手にトリプルアクセル持ちがいない場合、まずメガカイリューを初手にだして1体持っていく。クエスパトラ意識の初手には有利がとれているはず。ヒロトムとイダイトウのサイクルが強力。例: 環境トップのメガフラエッテはクイックターン→ヒロトム受けボルトチェンジ→ウェーブタックルで対処可能。ミミッキュ/ギルガルドにはおにびでイダイトウの天敵を対策できる。',
+  },
+  {
+    label: 'パターン③（変則・ハイブリッド）',
+    order: ['201', '1198', '1271'],
+    names: ['メガカイリュー', 'クエスパトラ', 'ブリジュラス'],
+    desc: '初手のギルガルド/ハッサムをメガカイリューで対応し、クエス+ブリジュラスでサイクル。サイクル戦になればメガカイリューにバトンしてもよい（サブプランなのではねやすめは未採用）。',
+  },
+];
+const TOUGH_MATCHUPS = ['ゲンガー', 'ハッサム', 'ギルガルド', 'マスカーニャ', 'ルカリオ'];
+const MATCHUP_NOTES = [
+  { label: '雨パ（ペリッパー+イダイトウ/ブリジュラス/スターミー）', note: 'どの組み合わせでも①で選出。ブリジュラスまでバトンできれば全抜き可能。クエスが耐久に振っているおかげで、初手スターミー相手もまもる→めいそう→バトンまで積める。' },
+  { label: '初手交代技持ち（カバルドン/ブリジュラス/ガブリアスなど）', note: 'ピクシーがメガしていないと、めいそう/まもるしてもバトン先が吹き飛ばされる。基本はバトン選出を避けるか、メガ発動タイミングを慎重に。（投稿者補足待ち）' },
+  { label: 'ドヒドイデ/ブラッキー', note: '積めずにバトンを渡したときは引き分け狙い。残り8分で持ち時間4分半あれば引き分け圏内。' },
+];
+
+// FIXED_PARTY をスロット形式に展開（読込用）
+function buildFixedPartySlots() {
+  return FIXED_PARTY_DATA.map(d => {
+    const r = ROSTER.find(x => x.id === d.rosterId);
+    if (!r) return null;
+    const moves = d.moves.map(name => {
+      const md = lookupMove(name);
+      if (!md) return { name, type: '', cat: '', bp: null, accuracy: null, priority: null };
+      let bp;
+      if (md.cat === '変') bp = 0;
+      else if (MOVE_SPECIAL[name]) bp = null;
+      else bp = MOVE_BP[name] != null ? MOVE_BP[name] : null;
+      return {
+        name,
+        type: md.type,
+        cat: md.cat,
+        bp,
+        accuracy: MOVE_ACCURACY[name] != null ? MOVE_ACCURACY[name] : null,
+        priority: MOVE_PRIORITY[name] != null ? MOVE_PRIORITY[name] : null,
+      };
+    });
+    return {
+      id: r.id,
+      dex: r.dex,
+      jp: r.jp,
+      types: r.types,
+      img: r.img,
+      spd: r.spd,
+      moves,
+      item: d.item,
+      ability: d.ability,
+    };
+  });
+}
+
+// ====== 固定構築ビュー ======
+function FixedPartyView({ onLoad, currentTeam }) {
+  const [expandedIdx, setExpandedIdx] = useState(null);
+  const colorClasses = {
+    violet:  { bg: 'bg-violet-50',  border: 'border-violet-300',  text: 'text-violet-800',  chip: 'bg-violet-100 text-violet-800',  accent: 'bg-violet-600' },
+    pink:    { bg: 'bg-pink-50',    border: 'border-pink-300',    text: 'text-pink-800',    chip: 'bg-pink-100 text-pink-800',    accent: 'bg-pink-600' },
+    emerald: { bg: 'bg-emerald-50', border: 'border-emerald-300', text: 'text-emerald-800', chip: 'bg-emerald-100 text-emerald-800', accent: 'bg-emerald-600' },
+    sky:     { bg: 'bg-sky-50',     border: 'border-sky-300',     text: 'text-sky-800',     chip: 'bg-sky-100 text-sky-800',     accent: 'bg-sky-600' },
+    orange:  { bg: 'bg-orange-50',  border: 'border-orange-300',  text: 'text-orange-800',  chip: 'bg-orange-100 text-orange-800',  accent: 'bg-orange-600' },
+    indigo:  { bg: 'bg-indigo-50',  border: 'border-indigo-300',  text: 'text-indigo-800',  chip: 'bg-indigo-100 text-indigo-800',  accent: 'bg-indigo-600' },
+  };
+  const teamLoaded = (() => {
+    const ids = FIXED_PARTY_DATA.map(d => d.rosterId);
+    const curIds = (currentTeam || []).filter(Boolean).map(p => p.id);
+    return ids.every(id => curIds.includes(id));
+  })();
+
+  const handleLoad = () => {
+    const hasExisting = (currentTeam || []).some(Boolean);
+    if (hasExisting && !confirm('現在の自チーム内容を「ピクシーバトンリレー構築」で上書きしますか？')) return;
+    onLoad();
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* ヘッダー */}
+      <div className="bg-gradient-to-br from-indigo-50 via-pink-50 to-amber-50 border-2 border-indigo-300 rounded-lg p-3">
+        <div className="flex items-start justify-between gap-2 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] text-gray-500 mb-0.5">📘 固定構築</div>
+            <h2 className="text-base sm:text-lg font-bold text-gray-800">{FIXED_PARTY_META.title}</h2>
+            <div className="text-[11px] text-gray-600 mt-0.5">
+              <span className="font-bold">{FIXED_PARTY_META.rank}</span>
+              <span className="mx-1.5 text-gray-400">|</span>
+              <a href={FIXED_PARTY_META.url} target="_blank" rel="noopener" className="text-indigo-600 hover:underline">出典記事</a>
+              <span className="mx-1.5 text-gray-400">|</span>
+              <span className="text-gray-500">投稿者: {FIXED_PARTY_META.author}</span>
+            </div>
+          </div>
+          <button
+            onClick={handleLoad}
+            className={`px-3 py-1.5 text-xs font-bold rounded border-2 shadow-sm transition ${teamLoaded ? 'bg-green-100 text-green-800 border-green-400' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-700'}`}>
+            {teamLoaded ? '✓ 読み込み済み（再読込）' : '⬇ 自チームに読み込む'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-700 mt-2 leading-relaxed">{FIXED_PARTY_META.concept}</p>
+      </div>
+
+      {/* 選出パターン */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1">⚔ 選出パターン</div>
+        <div className="space-y-2">
+          {SELECTION_PATTERNS.map((p, i) => (
+            <div key={i} className={`border rounded p-2 ${i===0 ? 'bg-pink-50 border-pink-200' : i===1 ? 'bg-sky-50 border-sky-200' : 'bg-amber-50 border-amber-200'}`}>
+              <div className="text-[11px] font-bold text-gray-800 mb-1">{p.label}</div>
+              <div className="flex items-center gap-1 mb-1 flex-wrap">
+                {p.order.map((rid, idx) => {
+                  const r = ROSTER.find(x => x.id === rid);
+                  return (
+                    <React.Fragment key={rid}>
+                      <div className="flex items-center gap-1 bg-white rounded px-1.5 py-0.5 border">
+                        {r && <img src={pokeImg(r)} onError={e=>{e.target.src=pokeImgFallback(r)}} className="w-5 h-5 object-contain" />}
+                        <span className="text-[10px] font-bold">{p.names[idx]}</span>
+                      </div>
+                      {idx < p.order.length - 1 && <span className="text-gray-400 text-[10px]">→</span>}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] text-gray-700 leading-relaxed">{p.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 6体詳細 */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1">🎯 採用ポケモン（6体）</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {FIXED_PARTY_DATA.map((d, i) => {
+            const r = ROSTER.find(x => x.id === d.rosterId);
+            if (!r) return null;
+            const cc = colorClasses[d.color] || colorClasses.indigo;
+            const item = ITEM_MAP[d.item];
+            const isOpen = expandedIdx === i;
+            return (
+              <div key={d.rosterId} className={`rounded-lg border-2 ${cc.border} ${cc.bg} overflow-hidden`}>
+                <button
+                  onClick={()=>setExpandedIdx(isOpen ? null : i)}
+                  className="w-full p-2 text-left hover:bg-white/50 transition">
+                  <div className="flex items-start gap-2">
+                    <img src={pokeImg(r)} onError={e=>{e.target.src=pokeImgFallback(r)}} className="w-12 h-12 object-contain flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <div className={`text-sm font-bold ${cc.text}`}>
+                          {d.roleIcon} {item?.group === 'mega' ? 'メガ' + r.jp : r.jp}
+                        </div>
+                        <span className="text-[10px] text-gray-500">{isOpen ? '▲' : '▼'}</span>
+                      </div>
+                      <div className={`text-[10px] font-bold px-1.5 py-0.5 rounded inline-block mt-0.5 ${cc.chip}`}>{d.role}</div>
+                      <div className="flex items-center gap-1 mt-1 flex-wrap">
+                        <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border" title="持ち物">{item?.emoji}{item?.short || d.item}</span>
+                        <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border" title="とくせい">💡{d.ability}</span>
+                        <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border" title="性格">♦{d.nature}</span>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="px-2 pb-2 pt-0 border-t border-white/70">
+                    {d.abilityBefore && (
+                      <div className="text-[10px] text-gray-600 mt-1.5">メガ前特性: <span className="font-bold">{d.abilityBefore}</span></div>
+                    )}
+                    <div className="text-[10px] text-gray-700 mt-1"><span className="font-bold">努力値:</span> {d.evs}</div>
+                    <div className="text-[10px] text-gray-700 mt-0.5">
+                      <span className="font-bold">実数値:</span>{' '}
+                      <span className="font-mono">H{d.stats[0]} / A{d.stats[1]} / B{d.stats[2]} / C{d.stats[3]} / D{d.stats[4]} / S{d.stats[5]}</span>
+                    </div>
+                    <div className="text-[10px] text-gray-700 mt-1 font-bold">技構成:</div>
+                    <div className="grid grid-cols-2 gap-1 mt-0.5">
+                      {d.moves.map(m => {
+                        const md = lookupMove(m);
+                        return (
+                          <div key={m} className="text-[10px] bg-white rounded px-1.5 py-0.5 border">
+                            <span className="font-bold">{m}</span>
+                            {md && <span className="text-gray-400 ml-1">({md.type}/{md.cat})</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-1.5 text-[11px] text-gray-700 leading-relaxed bg-white/70 rounded p-1.5">
+                      <span className="font-bold">役割・立ち回り:</span> {d.desc}
+                    </div>
+                    {d.calc && (
+                      <div className="mt-1 text-[10px] text-gray-600 bg-yellow-50 border border-yellow-200 rounded px-1.5 py-1">
+                        <span className="font-bold">📊 ダメ計:</span> {d.calc}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 苦手対面 */}
+      <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+        <div className="text-xs font-bold text-red-800 mb-1.5 flex items-center gap-1">⚠ 表選出が刺さりづらいポケモン</div>
+        <div className="flex items-center gap-1 flex-wrap mb-2">
+          {TOUGH_MATCHUPS.map(name => {
+            const r = findRosterByJpName(name);
+            return (
+              <div key={name} className="flex items-center gap-1 bg-white rounded px-1.5 py-0.5 border border-red-300">
+                {r && <img src={pokeImg(r)} onError={e=>{e.target.src=pokeImgFallback(r)}} className="w-5 h-5 object-contain" />}
+                <span className="text-[10px] font-bold text-red-800">{name}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[11px] text-red-700">これらが <span className="font-bold">2体以上</span> いる場合はパターン②を選出。1体の場合はパターン①でもOK。</div>
+      </div>
+
+      {/* 対面別メモ */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1">📝 対面別メモ（Q&Aより）</div>
+        <div className="space-y-1.5">
+          {MATCHUP_NOTES.map((n, i) => (
+            <div key={i} className="border border-gray-200 rounded p-1.5 bg-gray-50">
+              <div className="text-[11px] font-bold text-gray-800 mb-0.5">{n.label}</div>
+              <div className="text-[10px] text-gray-600 leading-relaxed">{n.note}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="text-[10px] text-gray-400 text-center">
+        出典: <a href={FIXED_PARTY_META.url} target="_blank" rel="noopener" className="text-indigo-500 hover:underline">{FIXED_PARTY_META.url}</a>
+      </div>
+    </div>
+  );
+}
+
 // ====== メイン ======
 function App() {
   const [tab, setTab] = useState('battle');
@@ -6879,12 +7219,21 @@ function App() {
     setTeams(teams.map((t,i)=> i===activeIdx ? {...t, slots} : t));
   };
 
+  // 固定構築を自チームに読込
+  const loadFixedParty = () => {
+    const slots = buildFixedPartySlots();
+    // 6枠に収まるようにパディング
+    while (slots.length < 6) slots.push(null);
+    setUserTeam(slots.slice(0, 6));
+    setTab('team'); // 読込後、自軍登録画面で確認できるように
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-6xl mx-auto p-3 sm:p-4">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.7 敵構成分析+マトリクス視点切替</span></h1>
+            <h1 className="text-xl sm:text-2xl font-bold">ポケチャン選出補助 <span className="text-[10px] font-normal text-green-600 align-middle">v3.8 固定構築専用ページ</span></h1>
             <p className="text-xs text-gray-500">タイプ相性ベース / 自軍事前登録式</p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -6912,11 +7261,16 @@ function App() {
             className={`px-3 sm:px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition whitespace-nowrap ${tab==='team'?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
             <IconSettings className="w-4 h-4" /> 自軍登録
           </button>
+          <button onClick={()=>setTab('fixed')}
+            className={`px-3 sm:px-4 py-2 text-sm font-bold flex items-center gap-1 border-b-2 transition whitespace-nowrap ${tab==='fixed'?'border-indigo-600 text-indigo-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            📘 固定構築
+          </button>
         </div>
 
         {tab==='battle' && <BattleView opponents={opponents} setOpponents={setOpponents} userTeam={userTeam} />}
         {tab==='live' && <LiveBattleView userTeam={userTeam} opponents={opponents} setOpponents={setOpponents} />}
         {tab==='team' && <TeamSetup team={userTeam} setTeam={setUserTeam} />}
+        {tab==='fixed' && <FixedPartyView onLoad={loadFixedParty} currentTeam={userTeam} />}
 
         {showSyncModal && (
           <SyncSetupModal onClose={()=>setShowSyncModal(false)} onConnect={doConnect} />
